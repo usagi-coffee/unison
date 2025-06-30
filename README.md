@@ -1,20 +1,25 @@
 # Unison
 
-Lightweight UDP redundancy stack with a TUN-based duplicator and a NFQUEUE-driven deduplicator. Supports low-level routing, per-packet ID tagging, and out-of-order filtering. Designed to evolve into a bonded multi-interface transport.
+Lightweight UDP redundancy stack with a TUN-based duplicator and a NFQUEUE-driven deduplicator. Supports low-level routing, per-packet ID tagging, and out-of-order filtering. Designed to evolve into a transparent bonded multi-interface transport.
 
 ## Client
 
+This configuration assumes two interfaces `stream0` and `stream1` for sending packets, and a TUN interface `tun0` for tagging, traffic goes over port `8888`.
+
 ```
+# Enable NFQUEUE
+sudo modprobe nfnetlink_queue
+
 # Forwarding
 sysctl -w net.ipv4.ip_forward=1
 sysctl -w net.ipv6.conf.all.forwarding=1
 
-# Duplicator
+# Tagging
 ip tuntap add dev tun0 mode tun
 ip addr add 10.10.1.0/24 dev tun0
 ip link set tun0 up
 
-# Route traffic to duplicator
+# Route traffic to tagger
 iptables -t mangle -A OUTPUT -p udp --dport 8888 -j MARK --set-mark 123
 ip rule add fwmark 123 table 200
 ip route add default dev tun0 table 200
@@ -26,7 +31,12 @@ iptables -I INPUT -i stream1 -j NFQUEUE --queue-num 0
 
 ## Server
 
+This configuration assumes two interfaces `recv0` and `recv1` for receiving packets, and a TUN interface `tun0` for tagging, client is `192.168.50.31` and traffic goes over port `8888`.
+
 ```
+# Enable NFQUEUE
+sudo modprobe nfnetlink_queue
+
 # Forwarding
 sysctl -w net.ipv4.ip_forward=1
 sysctl -w net.ipv6.conf.all.forwarding=1
@@ -49,11 +59,11 @@ iptables -t mangle -A PREROUTING -i recv1 -j CONNMARK --save-mark
 iptables -t mangle -A OUTPUT -d 192.168.50.31 -j CONNMARK --restore-mark
 iptables -t mangle -A POSTROUTING -d 192.168.50.31 -j CONNMARK --restore-mark
 
-# Route interfacets to duplicator
+# Route interfaces to tagger
 ip rule add to 192.168.50.31 table tun0table
 ip route add default dev tun0 table tun0table
 
-# Duplicator
+# Tagger
 ip tuntap add dev tun0 mode tun
 ip addr add 10.10.0.0/24 dev tun0
 ip link set tun0 up
