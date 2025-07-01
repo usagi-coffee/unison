@@ -28,6 +28,7 @@ pub fn listen(
     // Create one raw socket per interface
     let mut outputs: Vec<(String, Socket)> = Vec::new();
     for ifname in &configuration.interfaces {
+        println!("sender: binding to interface {}", ifname);
         let sock = Socket::new(
             Domain::IPV4,
             Type::from(libc::SOCK_RAW),
@@ -36,9 +37,10 @@ pub fn listen(
         bind_to_device(&sock, ifname)?;
         set_header_included(&sock)?;
 
-        println!("sender: created socket {}", dev.name());
         outputs.push((ifname.to_owned(), sock));
     }
+
+    println!("sender: listening for packets on {}", dev.name());
 
     let mut id = 0u32;
     let mut buf = [0u8; 1504];

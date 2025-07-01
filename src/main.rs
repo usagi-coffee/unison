@@ -8,15 +8,6 @@ mod sender;
 #[derive(Parser, Debug)]
 #[command(author, version, about)]
 pub struct Cli {
-    /// Sender
-    /// Tunnel name
-    #[arg(long, default_value = "tun0")]
-    tun: String,
-
-    /// Sender interfaces (e.g., wg0 wg1)
-    #[arg(required = true)]
-    interfaces: Vec<String>,
-
     /// Receiver
     /// NFQUEUE socket number
     #[arg(long, default_value = "0")]
@@ -25,6 +16,15 @@ pub struct Cli {
     /// Maximum number of packets in the queue
     #[arg(long, default_value = "1310712")] // ~128MB
     queue_max_len: u32,
+
+    /// Sender
+    /// Tunnel name
+    #[arg(long, default_value = "tun0")]
+    tun: String,
+
+    /// Sender interfaces (e.g., wg0 wg1)
+    #[arg(long, required = true, num_args = 1..)]
+    interfaces: Vec<String>,
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
