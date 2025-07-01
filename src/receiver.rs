@@ -1,10 +1,12 @@
 use crate::Cli;
+
+use std::collections::BTreeMap;
+
 use nfq::{Queue, Verdict};
 use pnet::packet::ip::IpNextHeaderProtocols;
 use pnet::packet::ipv4::{Ipv4Packet, MutableIpv4Packet};
 use pnet::packet::udp::MutableUdpPacket;
 use pnet::packet::{MutablePacket, Packet};
-use std::collections::BTreeMap;
 
 pub struct ReceiverConfiguration {
     socket: u16,

@@ -4,10 +4,9 @@ use std::io::{self, Read};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::os::unix::io::AsRawFd;
 
+use libc::{IP_HDRINCL, IPPROTO_IP, SO_BINDTODEVICE, SOL_SOCKET, setsockopt};
 use socket2::{Domain, Protocol, SockAddr, Socket, Type};
 use tun::{Configuration, Device};
-
-use libc::{IP_HDRINCL, IPPROTO_IP, SO_BINDTODEVICE, SOL_SOCKET, setsockopt};
 
 pub struct SenderConfiguration {
     tun: String,
