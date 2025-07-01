@@ -3,14 +3,6 @@ name = "unison"
 version = "0.1.0"
 edition = "2024"
 
-[[bin]]
-name = "tagger"
-path = "src/bin/tagger.rs"
-
-[[bin]]
-name = "dedup"
-path = "src/bin/dedup.rs"
-
 [dependencies]
 tun = "0.5"
 socket2 = "0.5"

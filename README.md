@@ -1,6 +1,6 @@
 # Unison
 
-Lightweight UDP redundancy stack with a TUN-based tagger and a NFQUEUE-driven deduplicator. Supports low-level routing, per-packet ID tagging, and out-of-order filtering. Designed to evolve into a transparent bonded multi-interface transport.
+Lightweight UDP redundancy transport layer with a TUN-based tagger and a NFQUEUE-driven deduplicator. Supports low-level routing, per-packet ID tagging, and out-of-order filtering. Designed to evolve into a transparent bonded multi-interface transport.
 
 ## Client
 
