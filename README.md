@@ -2,6 +2,12 @@
 
 Lightweight UDP redundancy transport layer with a TUN-based tagger and a NFQUEUE-driven deduplicator. Supports low-level routing, per-packet ID tagging, and out-of-order filtering. Designed to evolve into a transparent bonded multi-interface transport.
 
+## Installation
+
+```sh
+cargo install --git https://github.com/usagi-coffee/unison --locked
+```
+
 ## Client
 
 This configuration assumes two interfaces `stream0` and `stream1` for sending packets, and a TUN interface `tun0` for tagging, traffic goes over port `8888`.
