@@ -27,6 +27,9 @@ ip route add default dev tun0 table 200
 # Deduplication
 iptables -I INPUT -i stream0 -j NFQUEUE --queue-num 0
 iptables -I INPUT -i stream1 -j NFQUEUE --queue-num 0
+
+# Launch unison
+unison --tun tun0 --interfaces stream0 stream1
 ```
 
 ## Server
@@ -67,4 +70,7 @@ ip route add default dev tun0 table tun0table
 ip tuntap add dev tun0 mode tun
 ip addr add 10.10.0.0/24 dev tun0
 ip link set tun0 up
+
+# Launch unison
+unison --tun tun0 --interfaces recv0 recv1
 ```

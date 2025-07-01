@@ -13,7 +13,7 @@ pub struct Cli {
     #[arg(long, default_value = "tun0")]
     tun: String,
 
-    /// Output interfaces (e.g., wg0 wg1)
+    /// Sender interfaces (e.g., wg0 wg1)
     #[arg(required = true)]
     interfaces: Vec<String>,
 
