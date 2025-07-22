@@ -1,3 +1,5 @@
+use std::fs;
+
 use clap::{Parser, arg, command};
 use receiver::ReceiverConfiguration;
 use sender::SenderConfiguration;
@@ -28,8 +30,14 @@ pub struct Cli {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let cli = Cli::parse();
+    // Make sure the netfilter_queue module is loaded
+    fs::read_to_string("/proc/modules")
+        .expect("Could not read /proc/modules")
+        .lines()
+        .find(|line| line.starts_with("nfnetlink_queue"))
+        .expect("netfilter_queue module not loaded");
 
+    let cli = Cli::parse();
     std::thread::scope(|scope| {
         let (tx, rx) = std::sync::mpsc::channel();
 

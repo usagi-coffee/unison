@@ -4,7 +4,7 @@ Lightweight UDP redundancy transport layer with a TUN-based tagger and a NFQUEUE
 
 ## Installation
 
-```sh
+```bash
 cargo install --git https://github.com/usagi-coffee/unison --locked
 ```
 
@@ -12,7 +12,7 @@ cargo install --git https://github.com/usagi-coffee/unison --locked
 
 This configuration assumes two interfaces `stream0` and `stream1` for sending packets, and a TUN interface `tun0` for tagging, traffic goes over port `8888`.
 
-```
+```bash
 # Enable NFQUEUE
 sudo modprobe nfnetlink_queue
 
@@ -42,7 +42,7 @@ unison --tun tun0 --interfaces stream0 stream1
 
 This configuration assumes two interfaces `recv0` and `recv1` for receiving packets, and a TUN interface `tun0` for tagging, client is `192.168.50.31` and traffic goes over port `8888`.
 
-```
+```bash
 # Enable NFQUEUE
 sudo modprobe nfnetlink_queue
 
