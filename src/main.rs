@@ -1,7 +1,8 @@
-use std::fs;
+use std::process::Command;
 use std::sync::{Arc, atomic::AtomicBool};
 
 use clap::{Parser, arg, command};
+
 use receiver::ReceiverConfiguration;
 use sender::SenderConfiguration;
 
@@ -31,12 +32,16 @@ pub struct Cli {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    // Make sure the netfilter_queue module is loaded
-    fs::read_to_string("/proc/modules")
-        .expect("Could not read /proc/modules")
-        .lines()
-        .find(|line| line.starts_with("nfnetlink_queue"))
-        .expect("netfilter_queue module not loaded");
+    if sudo::check() != sudo::RunningAs::Root {
+        panic!("This program must be run as root");
+    }
+
+    let status = Command::new("modprobe")
+        .arg("nfnetlink_queue")
+        .status()
+        .expect("Failed to load netfilter_queue module");
+
+    assert!(status.success(), "Failed to load netfilter_queue module");
 
     let running = Arc::new(AtomicBool::new(true));
 

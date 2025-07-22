@@ -11,3 +11,4 @@ nfq = "0.2.5"
 pnet = "0.33"
 clap = { version = "4.5.40", features = ["derive"] }
 ctrlc = "3.4.7"
+sudo = "0.6.0"
