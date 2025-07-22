@@ -1,4 +1,5 @@
 use std::fs;
+use std::sync::{Arc, atomic::AtomicBool};
 
 use clap::{Parser, arg, command};
 use receiver::ReceiverConfiguration;
@@ -21,8 +22,8 @@ pub struct Cli {
 
     /// Sender
     /// Tunnel name
-    #[arg(long, default_value = "tun0")]
-    tun: String,
+    #[arg(long)]
+    tun: Option<String>,
 
     /// Sender interfaces (e.g., wg0 wg1)
     #[arg(long, required = true, num_args = 1..)]
@@ -37,18 +38,22 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .find(|line| line.starts_with("nfnetlink_queue"))
         .expect("netfilter_queue module not loaded");
 
+    let running = Arc::new(AtomicBool::new(true));
+
     let cli = Cli::parse();
     std::thread::scope(|scope| {
         let (tx, rx) = std::sync::mpsc::channel();
 
+        let receiver_running = running.clone();
         let receiver_config = ReceiverConfiguration::from(&cli);
         let receiver_tx = tx.clone();
 
+        let sender_running = running.clone();
         let sender_config = SenderConfiguration::from(&cli);
         let sender_tx = tx.clone();
 
-        scope.spawn(move || receiver_tx.send(receiver::listen(receiver_config)));
-        scope.spawn(move || sender_tx.send(sender::listen(sender_config)));
+        scope.spawn(move || receiver_tx.send(receiver::listen(receiver_config, receiver_running)));
+        scope.spawn(move || sender_tx.send(sender::listen(sender_config, sender_running)));
 
         rx.recv()?
     })?;

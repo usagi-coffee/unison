@@ -1,6 +1,8 @@
 use crate::Cli;
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use nfq::{Queue, Verdict};
 use pnet::packet::ip::IpNextHeaderProtocols;
@@ -20,6 +22,7 @@ enum MessageStatus {
 
 pub fn listen(
     configuration: ReceiverConfiguration,
+    running: Arc<AtomicBool>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let mut queue = Queue::open()?;
     queue.bind(configuration.socket)?;
@@ -29,7 +32,7 @@ pub fn listen(
     let mut current: u32 = 0;
 
     println!("receiver: listening on queue {}", configuration.socket);
-    loop {
+    while running.load(Ordering::Relaxed) {
         let mut msg = queue.recv()?;
 
         let status = process_message(&mut msg);
@@ -79,6 +82,8 @@ pub fn listen(
             }
         }
     }
+
+    Ok(())
 }
 
 fn process_message(msg: &mut nfq::Message) -> MessageStatus {
