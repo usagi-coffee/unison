@@ -73,8 +73,6 @@ pub fn listen(
         let mut tagged: Vec<u8> = packet.into();
         tagged.extend_from_slice(&id.to_be_bytes());
 
-        println!("sender: sending {}", id);
-
         // Increment the ID for the next packet
         id = id + 1;
 
@@ -118,15 +116,9 @@ impl<'a> Tunnel<'a> {
                     .cleanup(format!("tuntap del dev {} mode tun", &iface)),
             );
 
-            rules.push(CommandGuard::new("ip").call(format!(
-                "addr add {} dev {}",
-                if configuration.server {
-                    "10.10.1.100/24"
-                } else {
-                    "10.10.1.0/24"
-                },
-                &iface
-            )));
+            rules.push(
+                CommandGuard::new("ip").call(format!("addr add {} dev {}", "10.10.1.0/24", &iface)),
+            );
 
             rules.push(CommandGuard::new("ip").call(format!("link set {} up", &iface)));
         }
