@@ -1,67 +1,76 @@
 use std::process::Command;
+use std::sync::atomic::Ordering;
 use std::sync::{Arc, atomic::AtomicBool};
 
-use clap::{Parser, arg, command};
+use clap::Parser;
 
-use receiver::ReceiverConfiguration;
-use sender::SenderConfiguration;
+use types::CommandGuard;
+use types::{Cli, ReceiverConfiguration, SenderConfiguration};
 
 mod receiver;
 mod sender;
-
-#[derive(Parser, Debug)]
-#[command(author, version, about)]
-pub struct Cli {
-    /// Receiver
-    /// NFQUEUE socket number
-    #[arg(long, default_value = "0")]
-    queue: u16,
-
-    /// Maximum number of packets in the queue
-    #[arg(long, default_value = "1310712")] // ~128MB
-    queue_max_len: u32,
-
-    /// Sender
-    /// Tunnel name
-    #[arg(long)]
-    tun: Option<String>,
-
-    /// Sender interfaces (e.g., wg0 wg1)
-    #[arg(long, required = true, num_args = 1..)]
-    interfaces: Vec<String>,
-}
+mod types;
+mod utils;
 
 fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     if sudo::check() != sudo::RunningAs::Root {
         panic!("This program must be run as root");
     }
 
+    let cli = Cli::parse();
+
+    forwarding();
+    netfilter();
+
+    let running = Arc::new(AtomicBool::new(true));
+
+    let running_tx = running.clone();
+    ctrlc::set_handler(move || {
+        println!("");
+        println!("Received CTRL+C, stopping...");
+        running_tx.store(false, Ordering::Relaxed);
+    })?;
+
+    std::thread::scope(|scope| {
+        let (tx, rx) = std::sync::mpsc::channel();
+
+        let receiver_running = running.clone();
+        let receiver_config = ReceiverConfiguration::from(cli.clone());
+        let receiver_tx = tx.clone();
+
+        let sender_running = running.clone();
+        let sender_config = SenderConfiguration::from(cli.clone());
+        let sender_tx = tx.clone();
+
+        scope.spawn(move || {
+            let running = receiver_running.clone();
+            let result = receiver_tx.send(receiver::listen(receiver_config, receiver_running));
+            running.store(false, Ordering::Relaxed);
+            result
+        });
+
+        scope.spawn(move || {
+            let running = sender_running.clone();
+            let result = sender_tx.send(sender::listen(sender_config, sender_running));
+            running.store(false, Ordering::Relaxed);
+            result
+        });
+
+        rx.recv()?
+    })?;
+
+    Ok(())
+}
+
+pub fn forwarding<'a>() -> CommandGuard<'a> {
+    CommandGuard::new("sysctl").call("-w net.ipv4.ip_forward=1".into())
+}
+
+pub fn netfilter() {
     let status = Command::new("modprobe")
         .arg("nfnetlink_queue")
         .status()
         .expect("Failed to load netfilter_queue module");
 
     assert!(status.success(), "Failed to load netfilter_queue module");
-
-    let running = Arc::new(AtomicBool::new(true));
-
-    let cli = Cli::parse();
-    std::thread::scope(|scope| {
-        let (tx, rx) = std::sync::mpsc::channel();
-
-        let receiver_running = running.clone();
-        let receiver_config = ReceiverConfiguration::from(&cli);
-        let receiver_tx = tx.clone();
-
-        let sender_running = running.clone();
-        let sender_config = SenderConfiguration::from(&cli);
-        let sender_tx = tx.clone();
-
-        scope.spawn(move || receiver_tx.send(receiver::listen(receiver_config, receiver_running)));
-        scope.spawn(move || sender_tx.send(sender::listen(sender_config, sender_running)));
-
-        rx.recv()?
-    })?;
-
-    Ok(())
 }

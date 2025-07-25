@@ -1,8 +1,7 @@
-use crate::Cli;
-
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Duration, Instant};
 
 use nfq::{Queue, Verdict};
 use pnet::packet::ip::IpNextHeaderProtocols;
@@ -10,10 +9,7 @@ use pnet::packet::ipv4::{Ipv4Packet, MutableIpv4Packet};
 use pnet::packet::udp::MutableUdpPacket;
 use pnet::packet::{MutablePacket, Packet};
 
-pub struct ReceiverConfiguration {
-    socket: u16,
-    max_len: u32,
-}
+use crate::types::{CommandGuard, ReceiverConfiguration};
 
 enum MessageStatus {
     Processed(u32),
@@ -24,18 +20,36 @@ pub fn listen(
     configuration: ReceiverConfiguration,
     running: Arc<AtomicBool>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let _rules = iptables(&configuration);
+
     let mut queue = Queue::open()?;
-    queue.bind(configuration.socket)?;
-    queue.set_queue_max_len(0, configuration.max_len)?;
+    queue.bind(configuration.queue)?;
+    queue.set_queue_max_len(0, configuration.queue_max_len)?;
 
     let mut map: BTreeMap<u32, (nfq::Message, MessageStatus)> = BTreeMap::new();
     let mut current: u32 = 0;
 
-    println!("receiver: listening on queue {}", configuration.socket);
-    while running.load(Ordering::Relaxed) {
-        let mut msg = queue.recv()?;
+    queue.set_nonblocking(true);
 
+    let last = Instant::now();
+
+    println!("receiver: listening on queue {}", configuration.queue);
+    while running.load(Ordering::Relaxed) {
+        let mut msg = match queue.recv() {
+            Ok(msg) => msg,
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                std::thread::sleep(Duration::from_millis(10));
+                continue;
+            }
+            Err(error) => {
+                println!("receiver: {}", error);
+                break;
+            }
+        };
+
+        // Pretty-print the message
         let status = process_message(&mut msg);
+
         match status {
             MessageStatus::Processed(id) if current == 0 || id == current => {
                 if let Some((mut buffered, _)) = map.remove(&id) {
@@ -44,11 +58,19 @@ pub fn listen(
                 }
 
                 msg.set_verdict(Verdict::Accept);
+
                 queue.verdict(msg)?;
                 current = id + 1;
             }
             // Replace buffered message if it's newer or set new current
             MessageStatus::Processed(id) if id > current => {
+                if Instant::now().duration_since(last).as_millis() > configuration.timeout {
+                    if let Some((first, _)) = map.first_key_value() {
+                        println!("receiver: timeout, skipping until {}", first);
+                        current = *first;
+                    }
+                }
+
                 if let Some((mut buffered, _)) = map.insert(id, (msg, status)) {
                     buffered.set_verdict(Verdict::Drop);
                     queue.verdict(buffered)?;
@@ -72,6 +94,7 @@ pub fn listen(
             match status {
                 MessageStatus::Processed(id) => {
                     msg.set_verdict(Verdict::Accept);
+
                     queue.verdict(msg)?;
                     current = id + 1;
                 }
@@ -126,11 +149,44 @@ fn process_message(msg: &mut nfq::Message) -> MessageStatus {
     MessageStatus::Invalid
 }
 
-impl From<&Cli> for ReceiverConfiguration {
-    fn from(cli: &Cli) -> Self {
-        ReceiverConfiguration {
-            socket: cli.queue.clone(),
-            max_len: cli.queue_max_len.clone(),
+fn iptables(configuration: &ReceiverConfiguration) -> Vec<CommandGuard<'_>> {
+    let mut rules = vec![];
+
+    if !configuration.server {
+        // On client redirect packets coming from the server to nfqueue
+        if let Some(ports) = &configuration.ports {
+            for port in ports {
+                rules.push(
+                    CommandGuard::new("iptables")
+                        .call(format!(
+                            "-t mangle -A INPUT -p udp --sport {} -j NFQUEUE --queue-num {}",
+                            port, configuration.queue
+                        ))
+                        .cleanup(format!(
+                            "-t mangle -D INPUT -p udp --sport {} -j NFQUEUE --queue-num {}",
+                            port, configuration.queue
+                        )),
+                );
+            }
+        }
+    } else {
+        // On server redirect packets coming from the client to nfqueue
+        if let Some(ports) = &configuration.ports {
+            for port in ports {
+                rules.push(
+                    CommandGuard::new("iptables")
+                        .call(format!(
+                            "-t mangle -A INPUT -p udp --dport {} -j NFQUEUE --queue-num {}",
+                            port, configuration.queue
+                        ))
+                        .cleanup(format!(
+                            "-t mangle -D INPUT -p udp --dport {} -j NFQUEUE --queue-num {}",
+                            port, configuration.queue
+                        )),
+                );
+            }
         }
     }
+
+    rules
 }
