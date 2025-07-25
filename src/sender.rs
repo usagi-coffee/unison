@@ -1,17 +1,16 @@
-use std::io::{self, Read};
+use std::io::Read;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-use std::os::unix::io::AsRawFd;
 use std::process::Command;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use libc::{IP_HDRINCL, IPPROTO_IP, SO_BINDTODEVICE, SOL_SOCKET, setsockopt};
 use socket2::{Domain, Protocol, SockAddr, Socket, Type};
 use tun::Device;
 
-use crate::types::{CommandGuard, SenderConfiguration};
+use crate::types::SenderConfiguration;
 use crate::utils::interfaces;
+use crate::utils::{CommandGuard, bind_to_device, set_header_included, set_mark};
 
 pub struct Tunnel<'a> {
     pub dev: tun::platform::Device,
@@ -29,17 +28,18 @@ pub fn listen(
 
     // Create one raw socket per interface
     let mut outputs: Vec<(String, Socket)> = Vec::new();
+
     for ifname in &configuration.interfaces {
         println!("sender: binding to interface {}", ifname);
-        let sock = Socket::new(
+        let socket = Socket::new(
             Domain::IPV4,
             Type::from(libc::SOCK_RAW),
             Some(Protocol::from(libc::IPPROTO_RAW)),
         )?;
-        bind_to_device(&sock, ifname)?;
-        set_header_included(&sock)?;
+        bind_to_device(&socket, ifname)?;
+        set_header_included(&socket)?;
 
-        outputs.push((ifname.to_owned(), sock));
+        outputs.push((ifname.to_owned(), socket));
     }
 
     let mut id = 0u32;
@@ -76,8 +76,8 @@ pub fn listen(
         // Increment the ID for the next packet
         id = id + 1;
 
-        for (name, sock) in &outputs {
-            if let Err(error) = sock.send_to(&tagged, &dst) {
+        for (name, socket) in &outputs {
+            if let Err(error) = socket.send_to(&tagged, &dst) {
                 eprintln!("sender: {}: failed to send with {}", name, error);
             }
         }
@@ -114,10 +114,6 @@ impl<'a> Tunnel<'a> {
                 CommandGuard::new("ip")
                     .call(format!("tuntap add dev {} mode tun", &iface))
                     .cleanup(format!("tuntap del dev {} mode tun", &iface)),
-            );
-
-            rules.push(
-                CommandGuard::new("ip").call(format!("addr add {} dev {}", "10.10.1.0/24", &iface)),
             );
 
             rules.push(CommandGuard::new("ip").call(format!("link set {} up", &iface)));
@@ -158,10 +154,17 @@ impl<'a> Tunnel<'a> {
             }
         }
 
-        rules.push(CommandGuard::new("ip").call(format!(
-            "rule add fwmark 0x{:X} table {}",
-            configuration.fwmark, configuration.table
-        )));
+        rules.push(
+            CommandGuard::new("ip")
+                .call(format!(
+                    "rule add fwmark 0x{:X} table {}",
+                    configuration.fwmark, configuration.table
+                ))
+                .cleanup(format!(
+                    "rule del fwmark 0x{:X} table {}",
+                    configuration.fwmark, configuration.table
+                )),
+        );
 
         rules.push(CommandGuard::new("ip").call(format!(
             "route add default dev {} table {}",
@@ -190,40 +193,4 @@ impl<'a> Drop for Tunnel<'a> {
                 .expect("Failed to execute `ip` command");
         }
     }
-}
-
-fn bind_to_device(sock: &Socket, ifname: &str) -> io::Result<()> {
-    let fd = sock.as_raw_fd();
-    let ifname_cstr = std::ffi::CString::new(ifname).unwrap();
-    let res = unsafe {
-        setsockopt(
-            fd,
-            SOL_SOCKET,
-            SO_BINDTODEVICE,
-            ifname_cstr.as_ptr() as *const _,
-            ifname.len() as u32,
-        )
-    };
-    if res != 0 {
-        return Err(io::Error::last_os_error());
-    }
-    Ok(())
-}
-
-fn set_header_included(sock: &Socket) -> io::Result<()> {
-    let fd = sock.as_raw_fd();
-    let hdrincl: i32 = 1;
-    let res = unsafe {
-        setsockopt(
-            fd,
-            IPPROTO_IP,
-            IP_HDRINCL,
-            &hdrincl as *const _ as *const _,
-            std::mem::size_of::<i32>() as u32,
-        )
-    };
-    if res != 0 {
-        return Err(io::Error::last_os_error());
-    }
-    Ok(())
 }

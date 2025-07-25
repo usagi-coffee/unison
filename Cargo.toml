@@ -13,3 +13,5 @@ clap = { version = "4.5.40", features = ["derive"] }
 ctrlc = "3.4.7"
 sudo = "0.6.0"
 o2o = "0.5.4"
+hmac = "0.12.1"
+sha2 = "0.10.9"

@@ -7,6 +7,20 @@ pub struct Cli {
     #[arg(long, default_value = "false")]
     pub server: bool,
 
+    // Password used for the remote
+    #[arg(
+        long,
+        default_value = "f9e5996d942a307decbd7d43f20eb4a85b80e1e044f2cfa33f5110f01a4d52b0"
+    )]
+    pub secret: String,
+
+    #[arg(long)]
+    pub remote: Option<String>,
+
+    // Whitelist service port
+    #[arg(long, default_value = "7566")]
+    pub port: u16,
+
     /// Receiver
     /// NFQUEUE socket number
     #[arg(long, default_value = "0")]
@@ -63,77 +77,12 @@ pub struct ReceiverConfiguration {
     pub timeout: u128,
 }
 
-pub struct CommandGuard<'a> {
-    command: &'a str,
-    cleanup: Option<Box<dyn FnOnce() + 'a>>,
-    server: bool,
-}
-
-impl<'a> CommandGuard<'a> {
-    pub fn new(command: &'a str) -> Self {
-        let guard = CommandGuard {
-            command,
-            server: false,
-            cleanup: None,
-        };
-        guard
-    }
-
-    pub fn server(command: &'a str) -> Self {
-        let guard = CommandGuard {
-            command,
-            server: true,
-            cleanup: None,
-        };
-        guard
-    }
-
-    pub fn call(self, args: String) -> Self {
-        println!(
-            "[+{}] {} {}",
-            if self.server { "!" } else { "" },
-            self.command,
-            &args
-        );
-
-        let status = std::process::Command::new(self.command)
-            .args(args.split(' '))
-            .stdout(std::process::Stdio::null())
-            .status()
-            .expect("Failed to execute command");
-
-        assert!(status.success(), "Command failed");
-
-        self
-    }
-
-    pub fn cleanup(mut self, args: String) -> Self {
-        let command = self.command.to_owned();
-
-        self.cleanup = Some(Box::new(move || {
-            println!(
-                "[-{}] {} {}",
-                if self.server { "!" } else { "" },
-                command,
-                args
-            );
-
-            let status = std::process::Command::new(command)
-                .args(args.split(' '))
-                .status()
-                .expect("Failed to execute command");
-
-            assert!(status.success(), "Command failed");
-        }));
-
-        self
-    }
-}
-
-impl<'a> Drop for CommandGuard<'a> {
-    fn drop(&mut self) {
-        if let Some(cleanup) = self.cleanup.take() {
-            cleanup();
-        }
-    }
+#[derive(o2o)]
+#[from_owned(Cli)]
+pub struct WhitelistConfiguration {
+    pub server: bool,
+    pub remote: Option<String>,
+    pub port: u16,
+    pub secret: String,
+    pub interfaces: Vec<String>,
 }

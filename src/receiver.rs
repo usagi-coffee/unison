@@ -9,7 +9,8 @@ use pnet::packet::ipv4::{Ipv4Packet, MutableIpv4Packet};
 use pnet::packet::udp::MutableUdpPacket;
 use pnet::packet::{MutablePacket, Packet};
 
-use crate::types::{CommandGuard, ReceiverConfiguration};
+use crate::types::ReceiverConfiguration;
+use crate::utils::CommandGuard;
 
 enum MessageStatus {
     Processed(u32),

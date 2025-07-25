@@ -4,13 +4,14 @@ use std::sync::{Arc, atomic::AtomicBool};
 
 use clap::Parser;
 
-use types::CommandGuard;
-use types::{Cli, ReceiverConfiguration, SenderConfiguration};
+use types::{Cli, ReceiverConfiguration, SenderConfiguration, WhitelistConfiguration};
+use utils::CommandGuard;
 
 mod receiver;
 mod sender;
 mod types;
 mod utils;
+mod whitelist;
 
 fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     if sudo::check() != sudo::RunningAs::Root {
@@ -42,6 +43,10 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let sender_config = SenderConfiguration::from(cli.clone());
         let sender_tx = tx.clone();
 
+        let whitelist_running = running.clone();
+        let whitelist_config = WhitelistConfiguration::from(cli.clone());
+        let whitelist_tx = tx.clone();
+
         scope.spawn(move || {
             let running = receiver_running.clone();
             let result = receiver_tx.send(receiver::listen(receiver_config, receiver_running));
@@ -52,6 +57,13 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         scope.spawn(move || {
             let running = sender_running.clone();
             let result = sender_tx.send(sender::listen(sender_config, sender_running));
+            running.store(false, Ordering::Relaxed);
+            result
+        });
+
+        scope.spawn(move || {
+            let running = running.clone();
+            let result = whitelist_tx.send(whitelist::listen(whitelist_config, whitelist_running));
             running.store(false, Ordering::Relaxed);
             result
         });
