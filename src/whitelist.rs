@@ -44,7 +44,6 @@ fn server(
         .as_secs();
     let mut buf = [0u8; 32];
 
-    println!("whitelist: Listening on 0.0.0.0:{}", configuration.port);
     while running.load(Ordering::Relaxed) {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
