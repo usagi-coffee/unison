@@ -5,7 +5,6 @@ use std::sync::{
 
 use crate::types::{Stats, StatusConfiguration};
 
-use console::style;
 use indicatif::ProgressBar;
 use std::{thread, time::Duration};
 
@@ -14,8 +13,6 @@ pub fn listen(
     running: Arc<AtomicBool>,
     stats: Arc<Stats>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    std::thread::sleep(Duration::from_millis(1250));
-
     let pb = ProgressBar::new_spinner();
     pb.enable_steady_tick(Duration::from_millis(100));
 
@@ -24,6 +21,14 @@ pub fn listen(
 
     let mut recv_last_bytes = 0;
     let mut recv_peak_throughput = 0.0;
+
+    while running.load(Ordering::Relaxed) {
+        if stats.send_ready.load(Ordering::Relaxed) && stats.recv_ready.load(Ordering::Relaxed) {
+            break;
+        }
+
+        thread::sleep(Duration::from_millis(100));
+    }
 
     while running.load(Ordering::Relaxed) {
         let elapsed = stats.start_time.elapsed();
@@ -61,20 +66,12 @@ pub fn listen(
 
         let line = format!(
             "{} {:.2} MB/s | 🚀 {:.2} MB/s | 🧮 {:.2} MB | 📦 {:>6} | {}  {:.2} MB/s | 🚀 {:.2} MB/s | 🧮 {:.2} MB | ❌ {:>5} | 📦 {:>6} | 🌐 [{}] | ⏰ {} | ✅ {}",
-            if stats.send_ready.load(Ordering::Relaxed) {
-                style(format!("✈️")).green()
-            } else {
-                style(format!("✈️")).red()
-            },
+            format!("✈️"),
             send_throughput,
             send_peak_throughput,
             send_total,
             format!("{}", stats.send_current.load(Ordering::Relaxed)),
-            if stats.recv_ready.load(Ordering::Relaxed) {
-                style(format!("📥")).green()
-            } else {
-                style(format!("📥")).red()
-            },
+            format!("📥"),
             recv_throughput,
             recv_peak_throughput,
             recv_total,
