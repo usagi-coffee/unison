@@ -1,3 +1,9 @@
+use std::{
+    net::IpAddr,
+    sync::{Mutex, atomic::AtomicU64},
+    time::Instant,
+};
+
 use clap::{Parser, arg, command};
 use o2o::o2o;
 
@@ -89,4 +95,46 @@ pub struct WhitelistConfiguration {
     pub port: u16,
     pub secret: String,
     pub interfaces: Vec<String>,
+}
+
+#[derive(o2o)]
+#[from_owned(Cli)]
+pub struct StatusConfiguration {
+    pub interfaces: Vec<String>,
+}
+
+pub struct Stats {
+    pub start_time: Instant,
+
+    pub send_total: AtomicU64,
+    pub send_current: AtomicU64,
+    pub send_bytes: AtomicU64,
+
+    pub recv_total: AtomicU64,
+    pub recv_dropped: AtomicU64,
+    pub recv_current: AtomicU64,
+    pub recv_bytes: AtomicU64,
+    pub recv_out_of_order: AtomicU64,
+
+    pub whitelisted: Mutex<Vec<IpAddr>>,
+}
+
+impl Stats {
+    pub fn new() -> Self {
+        Self {
+            start_time: Instant::now(),
+
+            send_total: AtomicU64::new(0),
+            send_current: AtomicU64::new(0),
+            send_bytes: AtomicU64::new(0),
+
+            recv_total: AtomicU64::new(0),
+            recv_current: AtomicU64::new(0),
+            recv_dropped: AtomicU64::new(0),
+            recv_bytes: AtomicU64::new(0),
+            recv_out_of_order: AtomicU64::new(0),
+
+            whitelisted: Mutex::new(Vec::new()),
+        }
+    }
 }

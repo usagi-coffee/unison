@@ -9,7 +9,7 @@ use pnet::packet::ipv4::{Ipv4Packet, MutableIpv4Packet};
 use pnet::packet::udp::MutableUdpPacket;
 use pnet::packet::{MutablePacket, Packet};
 
-use crate::types::ReceiverConfiguration;
+use crate::types::{ReceiverConfiguration, Stats};
 use crate::utils::CommandGuard;
 
 enum MessageStatus {
@@ -20,6 +20,7 @@ enum MessageStatus {
 pub fn listen(
     configuration: ReceiverConfiguration,
     running: Arc<AtomicBool>,
+    stats: Arc<Stats>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let _rules = iptables(&configuration);
 
@@ -46,6 +47,8 @@ pub fn listen(
                 break;
             }
         };
+
+        let bytes = msg.get_original_len();
 
         // Pretty-print the message
         let status = process_message(&mut msg);
@@ -75,6 +78,8 @@ pub fn listen(
                     buffered.set_verdict(Verdict::Drop);
                     queue.verdict(buffered)?;
                 };
+
+                stats.recv_out_of_order.fetch_add(1, Ordering::Relaxed);
             }
             // Already processed, drop it
             MessageStatus::Processed(id) if id < current => {
@@ -85,6 +90,7 @@ pub fn listen(
             MessageStatus::Invalid => {
                 msg.set_verdict(Verdict::Drop);
                 queue.verdict(msg)?;
+                stats.recv_dropped.fetch_add(1, Ordering::Relaxed);
             }
             MessageStatus::Processed(_) => unreachable!("Should have matched above"),
         }
@@ -101,9 +107,15 @@ pub fn listen(
                 MessageStatus::Invalid => {
                     msg.set_verdict(Verdict::Drop);
                     queue.verdict(msg)?;
+
+                    stats.recv_dropped.fetch_add(1, Ordering::Relaxed);
                 }
             }
         }
+
+        stats.recv_total.fetch_add(1, Ordering::Relaxed);
+        stats.recv_bytes.fetch_add(bytes as u64, Ordering::Relaxed);
+        stats.recv_current.store(current as u64, Ordering::Relaxed);
     }
 
     Ok(())

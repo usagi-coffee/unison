@@ -11,23 +11,25 @@ use socket2::{Domain, Protocol, Socket, Type};
 
 type HmacSha256 = Hmac<Sha256>;
 
-use crate::types::WhitelistConfiguration;
+use crate::types::{Stats, WhitelistConfiguration};
 use crate::utils::{CommandGuard, bind_to_device};
 
 pub fn listen(
     configuration: WhitelistConfiguration,
     running: Arc<AtomicBool>,
+    stats: Arc<Stats>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     if configuration.server {
-        server(configuration, running)
+        server(configuration, running, stats)
     } else {
-        client(configuration, running)
+        client(configuration, running, stats)
     }
 }
 
 fn server(
     configuration: WhitelistConfiguration,
     running: Arc<AtomicBool>,
+    stats: Arc<Stats>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let mut rules = vec![];
     let mut whitelisted = vec![];
@@ -66,7 +68,9 @@ fn server(
                             );
 
                             whitelisted.push(src.ip());
-                            println!("whitelist: whitelisted {}", src.ip());
+                            if let Ok(mut whitelisted) = stats.whitelisted.lock() {
+                                whitelisted.push(src.ip());
+                            }
                         }
                     }
                 }
@@ -84,6 +88,7 @@ fn server(
 fn client(
     configuration: WhitelistConfiguration,
     running: Arc<AtomicBool>,
+    _stats: Arc<Stats>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     while running.load(Ordering::Relaxed) {
         let now = SystemTime::now()

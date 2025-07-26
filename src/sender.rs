@@ -9,12 +9,13 @@ use pnet::packet::ipv4::{Ipv4Packet, MutableIpv4Packet};
 use pnet::packet::udp::MutableUdpPacket;
 use socket2::{Domain, Protocol, SockAddr, Socket, Type};
 
-use crate::types::SenderConfiguration;
+use crate::types::{SenderConfiguration, Stats};
 use crate::utils::{CommandGuard, bind_to_device, set_header_included, set_mark};
 
 pub fn listen(
     configuration: SenderConfiguration,
     running: Arc<AtomicBool>,
+    stats: Arc<Stats>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let _rules = iptables(&configuration);
 
@@ -87,6 +88,12 @@ pub fn listen(
 
             msg.set_verdict(Verdict::Drop);
             queue.verdict(msg)?;
+
+            stats.send_total.fetch_add(1, Ordering::Relaxed);
+            stats
+                .send_bytes
+                .fetch_add(packet.len() as u64, Ordering::Relaxed);
+            stats.send_current.store(id as u64, Ordering::Relaxed);
         }
     }
 

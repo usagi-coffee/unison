@@ -4,11 +4,15 @@ use std::sync::{Arc, atomic::AtomicBool};
 
 use clap::Parser;
 
-use types::{Cli, ReceiverConfiguration, SenderConfiguration, WhitelistConfiguration};
+use types::{
+    Cli, ReceiverConfiguration, SenderConfiguration, Stats, StatusConfiguration,
+    WhitelistConfiguration,
+};
 use utils::CommandGuard;
 
 mod receiver;
 mod sender;
+mod status;
 mod types;
 mod utils;
 mod whitelist;
@@ -24,6 +28,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     netfilter();
 
     let running = Arc::new(AtomicBool::new(true));
+    let stats = Arc::new(Stats::new());
 
     let running_tx = running.clone();
     ctrlc::set_handler(move || {
@@ -36,34 +41,57 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let (tx, rx) = std::sync::mpsc::channel();
 
         let receiver_running = running.clone();
+        let receiver_stats = stats.clone();
         let receiver_config = ReceiverConfiguration::from(cli.clone());
         let receiver_tx = tx.clone();
 
         let sender_running = running.clone();
+        let sender_stats = stats.clone();
         let sender_config = SenderConfiguration::from(cli.clone());
         let sender_tx = tx.clone();
 
         let whitelist_running = running.clone();
+        let whitelist_stats = stats.clone();
         let whitelist_config = WhitelistConfiguration::from(cli.clone());
         let whitelist_tx = tx.clone();
 
+        let status_running = running.clone();
+        let status_config = StatusConfiguration::from(cli.clone());
+        let status_tx = tx.clone();
+
         scope.spawn(move || {
             let running = receiver_running.clone();
-            let result = receiver_tx.send(receiver::listen(receiver_config, receiver_running));
+            let result = receiver_tx.send(receiver::listen(
+                receiver_config,
+                receiver_running,
+                receiver_stats,
+            ));
             running.store(false, Ordering::Relaxed);
             result
         });
 
         scope.spawn(move || {
             let running = sender_running.clone();
-            let result = sender_tx.send(sender::listen(sender_config, sender_running));
+            let result =
+                sender_tx.send(sender::listen(sender_config, sender_running, sender_stats));
             running.store(false, Ordering::Relaxed);
             result
         });
 
         scope.spawn(move || {
             let running = running.clone();
-            let result = whitelist_tx.send(whitelist::listen(whitelist_config, whitelist_running));
+            let result = whitelist_tx.send(whitelist::listen(
+                whitelist_config,
+                whitelist_running,
+                whitelist_stats,
+            ));
+            running.store(false, Ordering::Relaxed);
+            result
+        });
+
+        scope.spawn(move || {
+            let running = status_running.clone();
+            let result = status_tx.send(status::listen(status_config, status_running, stats));
             running.store(false, Ordering::Relaxed);
             result
         });
