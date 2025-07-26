@@ -26,11 +26,10 @@ pub fn listen(
     let mut queue = Queue::open()?;
     queue.bind(configuration.recv_queue)?;
     queue.set_queue_max_len(configuration.recv_queue, configuration.recv_queue_max_len)?;
+    queue.set_nonblocking(true);
 
     let mut map: BTreeMap<u32, (nfq::Message, MessageStatus)> = BTreeMap::new();
     let mut current: u32 = 0;
-
-    queue.set_nonblocking(true);
 
     let last = Instant::now();
 
@@ -111,6 +110,8 @@ pub fn listen(
 }
 
 fn process_message(msg: &mut nfq::Message) -> MessageStatus {
+    let mut id = None;
+
     let mut payload = msg.get_payload().to_vec();
     if let Some(ip_packet) = Ipv4Packet::new(&payload)
         && ip_packet.get_next_level_protocol() == IpNextHeaderProtocols::Udp
@@ -118,33 +119,38 @@ fn process_message(msg: &mut nfq::Message) -> MessageStatus {
         let ip_header_len = (ip_packet.get_header_length() * 4) as usize;
         let (ip_buf, udp_packet_buf) = payload.split_at_mut(ip_header_len);
 
-        const UDP_HEADER: usize = 8;
+        const UDP_HEADER: u16 = 8;
         if let Some(mut udp_packet) = MutableUdpPacket::new(udp_packet_buf) {
-            let id = u32::from_be_bytes(
+            // Extract the ID
+            id = Some(u32::from_be_bytes(
                 udp_packet.payload()[udp_packet.payload().len() - 4..]
                     .try_into()
                     .unwrap(),
-            );
+            ));
 
-            let len = udp_packet.get_length() as usize - UDP_HEADER;
             let full_packet = udp_packet.packet_mut();
-            let (_, rest) = full_packet.split_at_mut(UDP_HEADER);
+            let (_, rest) = full_packet.split_at_mut(UDP_HEADER as usize);
 
+            // Zero out the last 4 bytes of the UDP payload
+            let len = rest.len() - 4;
             for b in &mut rest[len..] {
                 *b = 0;
             }
 
-            let new_udp_len = UDP_HEADER + len - 4;
-            udp_packet.set_length(new_udp_len as u16);
+            udp_packet.set_length(UDP_HEADER + len as u16);
             udp_packet.set_checksum(0);
 
             if let Some(mut ip_packet) = MutableIpv4Packet::new(ip_buf) {
-                let new_ip_len = (ip_header_len + new_udp_len) as u16;
+                let new_ip_len = ip_header_len as u16 + UDP_HEADER + len as u16;
                 ip_packet.set_total_length(new_ip_len);
                 ip_packet.set_checksum(0);
-                return MessageStatus::Processed(id);
             }
         }
+    }
+
+    if let Some(id_value) = id {
+        msg.set_payload(payload);
+        return MessageStatus::Processed(id_value);
     }
 
     MessageStatus::Invalid

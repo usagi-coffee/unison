@@ -21,7 +21,6 @@ pub fn listen(
     let mut queue = Queue::open()?;
     queue.bind(configuration.queue)?;
     queue.set_queue_max_len(configuration.queue, configuration.queue_max_len)?;
-
     queue.set_nonblocking(true);
 
     let mut id = 0u32;
