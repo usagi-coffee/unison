@@ -40,15 +40,15 @@ pub fn listen(
         );
 
         let send_bytes = stats.send_bytes.load(Ordering::Relaxed);
-        let send_total = send_bytes / 1_000_000;
-        let send_throughput = (send_bytes - send_last_bytes) as f64 / 1_000_000.0;
+        let send_total = (send_bytes * 8) / 1_000_000;
+        let send_throughput = ((send_bytes - send_last_bytes) * 8) as f64 / 1_000_000.0;
         if send_throughput > send_peak_throughput {
             send_peak_throughput = send_throughput;
         }
 
         let recv_bytes = stats.recv_bytes.load(Ordering::Relaxed);
-        let recv_total = recv_bytes / 1_000_000;
-        let recv_throughput = (recv_bytes - recv_last_bytes) as f64 / 1_000_000.0;
+        let recv_total = (recv_bytes * 8) / 1_000_000;
+        let recv_throughput = ((recv_bytes - recv_last_bytes) * 8) as f64 / 1_000_000.0;
         if recv_throughput > recv_peak_throughput {
             recv_peak_throughput = recv_throughput;
         }
@@ -65,13 +65,11 @@ pub fn listen(
         };
 
         let line = format!(
-            "{} {:.2} MB/s | 🚀 {:.2} MB/s | 🧮 {:.2} MB | 📦 {:>6} | {}  {:.2} MB/s | 🚀 {:.2} MB/s | 🧮 {:.2} MB | ❌ {:>5} | 📦 {:>6} | 🌐 [{}] | ⏰ {} | ✅ {}",
-            format!("✈️"),
+            "✈️ {:.2} ({:.2}) Mbps | 🧮 {:.3} MB | 📦 {:>6} | 📥 {:.2} ({:.2}) Mbps | 🧮 {:.3} MB | ❌ {:>4} | 📦 {:>6} | 🌐 [{}] | ⏰ {} {}",
             send_throughput,
             send_peak_throughput,
             send_total,
             format!("{}", stats.send_current.load(Ordering::Relaxed)),
-            format!("📥"),
             recv_throughput,
             recv_peak_throughput,
             recv_total,
@@ -79,7 +77,11 @@ pub fn listen(
             format!("{}", stats.recv_current.load(Ordering::Relaxed)),
             configuration.interfaces.join(", "),
             uptime,
-            whitelisted,
+            if configuration.server {
+                format!("✅ {}", whitelisted)
+            } else {
+                "".into()
+            }
         );
 
         pb.set_message(line);

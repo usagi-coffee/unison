@@ -103,6 +103,7 @@ pub struct WhitelistConfiguration {
 #[derive(o2o)]
 #[from_owned(Cli)]
 pub struct StatusConfiguration {
+    pub server: bool,
     pub interfaces: Vec<String>,
 }
 
