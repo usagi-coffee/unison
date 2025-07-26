@@ -34,7 +34,7 @@ pub fn listen(
 
     let last = Instant::now();
 
-    println!("receiver: listening on queue {}", configuration.recv_queue);
+    stats.recv_ready.store(true, Ordering::Relaxed);
     while running.load(Ordering::Relaxed) {
         let mut msg = match queue.recv() {
             Ok(msg) => msg,

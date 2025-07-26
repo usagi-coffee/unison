@@ -26,7 +26,7 @@ pub fn listen(
 
     let mut id = 0u32;
 
-    println!("sender: listening for packets");
+    stats.send_ready.store(true, Ordering::Relaxed);
     while running.load(Ordering::Relaxed) {
         let mut msg = match queue.recv() {
             Ok(msg) => msg,

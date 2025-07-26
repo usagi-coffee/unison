@@ -14,7 +14,7 @@ pub fn listen(
     running: Arc<AtomicBool>,
     stats: Arc<Stats>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    std::thread::sleep(Duration::from_millis(2500));
+    std::thread::sleep(Duration::from_millis(1250));
 
     let pb = ProgressBar::new_spinner();
     pb.enable_steady_tick(Duration::from_millis(100));
@@ -60,11 +60,21 @@ pub fn listen(
         };
 
         let line = format!(
-            "✈️ {:.2} MB/s | 🚀 {:.2} MB/s | 🧮 {:.2} MB | 📦 {:>6} | 📥 {:.2} MB/s | 🚀 {:.2} MB/s | 🧮 {:.2} MB | ❌ {:>5} | 📦 {:>6} | 🌐 [{}] | ⏰ {} | ✅ {}",
+            "{} {:.2} MB/s | 🚀 {:.2} MB/s | 🧮 {:.2} MB | 📦 {:>6} | {}  {:.2} MB/s | 🚀 {:.2} MB/s | 🧮 {:.2} MB | ❌ {:>5} | 📦 {:>6} | 🌐 [{}] | ⏰ {} | ✅ {}",
+            if stats.send_ready.load(Ordering::Relaxed) {
+                style(format!("✈️")).green()
+            } else {
+                style(format!("✈️")).red()
+            },
             send_throughput,
             send_peak_throughput,
             send_total,
             format!("{}", stats.send_current.load(Ordering::Relaxed)),
+            if stats.recv_ready.load(Ordering::Relaxed) {
+                style(format!("📥")).green()
+            } else {
+                style(format!("📥")).red()
+            },
             recv_throughput,
             recv_peak_throughput,
             recv_total,

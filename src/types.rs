@@ -1,6 +1,9 @@
 use std::{
     net::IpAddr,
-    sync::{Mutex, atomic::AtomicU64},
+    sync::{
+        Mutex,
+        atomic::{AtomicBool, AtomicU64},
+    },
     time::Instant,
 };
 
@@ -106,10 +109,12 @@ pub struct StatusConfiguration {
 pub struct Stats {
     pub start_time: Instant,
 
+    pub send_ready: AtomicBool,
     pub send_total: AtomicU64,
     pub send_current: AtomicU64,
     pub send_bytes: AtomicU64,
 
+    pub recv_ready: AtomicBool,
     pub recv_total: AtomicU64,
     pub recv_dropped: AtomicU64,
     pub recv_current: AtomicU64,
@@ -124,10 +129,12 @@ impl Stats {
         Self {
             start_time: Instant::now(),
 
+            send_ready: AtomicBool::new(false),
             send_total: AtomicU64::new(0),
             send_current: AtomicU64::new(0),
             send_bytes: AtomicU64::new(0),
 
+            recv_ready: AtomicBool::new(false),
             recv_total: AtomicU64::new(0),
             recv_current: AtomicU64::new(0),
             recv_dropped: AtomicU64::new(0),
