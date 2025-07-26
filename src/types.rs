@@ -23,12 +23,12 @@ pub struct Cli {
 
     /// Receiver
     /// NFQUEUE socket number
-    #[arg(long, default_value = "0")]
-    pub queue: u16,
+    #[arg(long, default_value = "1")]
+    pub recv_queue: u16,
 
     /// Maximum number of packets in the queue
     #[arg(long, default_value = "1310712")] // ~128MB
-    pub queue_max_len: u32,
+    pub recv_queue_max_len: u32,
 
     /// Timeout for receiving packet in milliseconds
     #[arg(long, default_value = "100")]
@@ -36,8 +36,12 @@ pub struct Cli {
 
     /// Sender
     /// Tunnel name
-    #[arg(long)]
-    pub tun: Option<String>,
+    #[arg(long, default_value = "0")]
+    pub queue: u16,
+
+    /// Maximum number of packets in the queue
+    #[arg(long, default_value = "1310712")] // ~128MB
+    pub queue_max_len: u32,
 
     /// Ports to intercept
     #[arg(long, num_args = 0..)]
@@ -60,11 +64,11 @@ pub struct Cli {
 #[from_owned(Cli)]
 pub struct SenderConfiguration {
     pub server: bool,
+    pub queue: u16,
     pub fwmark: u32,
-    pub table: u32,
+    pub queue_max_len: u32,
     pub interfaces: Vec<String>,
     pub ports: Option<Vec<u16>>,
-    pub tun: Option<String>,
 }
 
 #[derive(o2o)]
@@ -72,8 +76,8 @@ pub struct SenderConfiguration {
 pub struct ReceiverConfiguration {
     pub server: bool,
     pub ports: Option<Vec<u16>>,
-    pub queue: u16,
-    pub queue_max_len: u32,
+    pub recv_queue: u16,
+    pub recv_queue_max_len: u32,
     pub timeout: u128,
 }
 

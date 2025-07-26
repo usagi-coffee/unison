@@ -4,6 +4,7 @@ use std::io;
 use std::os::unix::io::AsRawFd;
 use std::process::Command;
 
+#[allow(dead_code)]
 pub fn interfaces() -> Vec<String> {
     let mut interfaces = vec![];
 
@@ -58,6 +59,7 @@ pub fn set_mark(sock: &Socket, mark: u32) -> io::Result<()> {
     Ok(())
 }
 
+#[allow(dead_code)]
 pub fn set_header_included(sock: &Socket) -> io::Result<()> {
     let fd = sock.as_raw_fd();
     let hdrincl: i32 = 1;

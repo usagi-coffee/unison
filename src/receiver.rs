@@ -24,8 +24,8 @@ pub fn listen(
     let _rules = iptables(&configuration);
 
     let mut queue = Queue::open()?;
-    queue.bind(configuration.queue)?;
-    queue.set_queue_max_len(0, configuration.queue_max_len)?;
+    queue.bind(configuration.recv_queue)?;
+    queue.set_queue_max_len(configuration.recv_queue, configuration.recv_queue_max_len)?;
 
     let mut map: BTreeMap<u32, (nfq::Message, MessageStatus)> = BTreeMap::new();
     let mut current: u32 = 0;
@@ -34,7 +34,7 @@ pub fn listen(
 
     let last = Instant::now();
 
-    println!("receiver: listening on queue {}", configuration.queue);
+    println!("receiver: listening on queue {}", configuration.recv_queue);
     while running.load(Ordering::Relaxed) {
         let mut msg = match queue.recv() {
             Ok(msg) => msg,
@@ -161,11 +161,11 @@ fn iptables(configuration: &ReceiverConfiguration) -> Vec<CommandGuard<'_>> {
                     CommandGuard::new("iptables")
                         .call(format!(
                             "-t mangle -A INPUT -p udp --sport {} -j NFQUEUE --queue-num {}",
-                            port, configuration.queue
+                            port, configuration.recv_queue
                         ))
                         .cleanup(format!(
                             "-t mangle -D INPUT -p udp --sport {} -j NFQUEUE --queue-num {}",
-                            port, configuration.queue
+                            port, configuration.recv_queue
                         )),
                 );
             }
@@ -178,11 +178,11 @@ fn iptables(configuration: &ReceiverConfiguration) -> Vec<CommandGuard<'_>> {
                     CommandGuard::new("iptables")
                         .call(format!(
                             "-t mangle -A INPUT -p udp --dport {} -j NFQUEUE --queue-num {}",
-                            port, configuration.queue
+                            port, configuration.recv_queue
                         ))
                         .cleanup(format!(
                             "-t mangle -D INPUT -p udp --dport {} -j NFQUEUE --queue-num {}",
-                            port, configuration.queue
+                            port, configuration.recv_queue
                         )),
                 );
             }

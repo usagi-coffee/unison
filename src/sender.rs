@@ -1,54 +1,35 @@
-use std::io::Read;
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-use std::process::Command;
+use std::net::{SocketAddr, SocketAddrV4};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
+use nfq::{Queue, Verdict};
+use pnet::packet::ip::IpNextHeaderProtocols;
+use pnet::packet::ipv4::{Ipv4Packet, MutableIpv4Packet};
+use pnet::packet::udp::MutableUdpPacket;
 use socket2::{Domain, Protocol, SockAddr, Socket, Type};
-use tun::Device;
 
 use crate::types::SenderConfiguration;
-use crate::utils::interfaces;
 use crate::utils::{CommandGuard, bind_to_device, set_header_included, set_mark};
-
-pub struct Tunnel<'a> {
-    pub dev: tun::platform::Device,
-    pub iface: String,
-    pub custom: bool,
-    _rules: Vec<CommandGuard<'a>>,
-}
 
 pub fn listen(
     configuration: SenderConfiguration,
     running: Arc<AtomicBool>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let mut tun = Tunnel::new(&configuration)?;
-    tun.dev.set_nonblock()?;
+    let _rules = iptables(&configuration);
 
-    // Create one raw socket per interface
-    let mut outputs: Vec<(String, Socket)> = Vec::new();
+    let mut queue = Queue::open()?;
+    queue.bind(configuration.queue)?;
+    queue.set_queue_max_len(configuration.queue, configuration.queue_max_len)?;
 
-    for ifname in &configuration.interfaces {
-        println!("sender: binding to interface {}", ifname);
-        let socket = Socket::new(
-            Domain::IPV4,
-            Type::from(libc::SOCK_RAW),
-            Some(Protocol::from(libc::IPPROTO_RAW)),
-        )?;
-        bind_to_device(&socket, ifname)?;
-        set_header_included(&socket)?;
-
-        outputs.push((ifname.to_owned(), socket));
-    }
+    queue.set_nonblocking(true);
 
     let mut id = 0u32;
-    let mut buf = [0u8; 1504];
 
-    println!("sender: listening for packets on {}", tun.dev.name());
+    println!("sender: listening for packets");
     while running.load(Ordering::Relaxed) {
-        let n = match tun.dev.read(&mut buf) {
-            Ok(n) => n,
+        let mut msg = match queue.recv() {
+            Ok(msg) => msg,
             Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                 std::thread::sleep(Duration::from_millis(10));
                 continue;
@@ -59,138 +40,98 @@ pub fn listen(
             }
         };
 
-        let packet = &buf[..n];
+        let mut packet = msg.get_payload().to_vec();
+        packet.extend_from_slice(&id.to_be_bytes());
 
-        // Filter out non-IPv4 packets
-        if packet[0] >> 4 != 4 {
-            continue;
-        }
+        if let Some(ip_packet) = Ipv4Packet::new(&packet)
+            && ip_packet.get_next_level_protocol() == IpNextHeaderProtocols::Udp
+        {
+            let ip_header_len = (ip_packet.get_header_length() * 4) as usize;
+            let dst = ip_packet.get_destination();
+            let dst_port = {
+                let udp_header = &packet[ip_header_len..ip_header_len + 4];
+                (udp_header[2] as u16) << 8 | (udp_header[3] as u16)
+            };
 
-        // Destination IP is at offset 16..20 in IPv4 header
-        let dst_ip = Ipv4Addr::new(packet[16], packet[17], packet[18], packet[19]);
-        let dst = SockAddr::from(SocketAddr::new(IpAddr::V4(dst_ip), 0));
+            let (ip_buf, udp_packet) = packet.split_at_mut(ip_header_len);
 
-        let mut tagged: Vec<u8> = packet.into();
-        tagged.extend_from_slice(&id.to_be_bytes());
+            if let Some(mut udp_packet) = MutableUdpPacket::new(udp_packet) {
+                udp_packet.set_length(udp_packet.get_length() + 4);
+                udp_packet.set_checksum(0);
 
-        // Increment the ID for the next packet
-        id = id + 1;
+                if let Some(mut ip_packet) = MutableIpv4Packet::new(ip_buf) {
+                    let new_ip_len = (ip_header_len as u16 + udp_packet.get_length()) as u16;
+                    ip_packet.set_total_length(new_ip_len);
+                    ip_packet.set_checksum(0);
 
-        for (name, socket) in &outputs {
-            if let Err(error) = socket.send_to(&tagged, &dst) {
-                eprintln!("sender: {}: failed to send with {}", name, error);
+                    for ifname in &configuration.interfaces {
+                        let socket = Socket::new(
+                            Domain::IPV4,
+                            Type::from(libc::SOCK_RAW),
+                            Some(Protocol::from(libc::IPPROTO_RAW)),
+                        )?;
+                        bind_to_device(&socket, &ifname)?;
+                        set_header_included(&socket)?;
+                        set_mark(&socket, configuration.fwmark)?;
+
+                        let dst_sock =
+                            SockAddr::from(SocketAddr::V4(SocketAddrV4::new(dst, dst_port)));
+
+                        if let Err(error) = socket.send_to(&packet, &dst_sock.into()) {
+                            eprintln!("sender: {}: failed to send with {}", ifname, error);
+                        }
+                    }
+
+                    id += 1;
+                }
             }
+
+            msg.set_verdict(Verdict::Drop);
+            queue.verdict(msg)?;
         }
     }
 
     Ok(())
 }
 
-impl<'a> Tunnel<'a> {
-    pub fn new(
-        configuration: &SenderConfiguration,
-    ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
-        let custom = configuration.tun.is_some();
-        let iface = {
-            if let Some(name) = &configuration.tun {
-                name.clone()
-            } else {
-                let interfaces = interfaces();
-                let mut n = 0;
-                loop {
-                    let name = format!("tun{}", n);
-                    if !interfaces.contains(&name) {
-                        break name;
-                    }
+fn iptables(configuration: &SenderConfiguration) -> Vec<CommandGuard<'_>> {
+    let mut rules = vec![];
 
-                    n = n + 1;
-                }
-            }
-        };
-
-        let mut rules = vec![];
-        if !custom {
-            rules.push(
-                CommandGuard::new("ip")
-                    .call(format!("tuntap add dev {} mode tun", &iface))
-                    .cleanup(format!("tuntap del dev {} mode tun", &iface)),
-            );
-
-            rules.push(CommandGuard::new("ip").call(format!("link set {} up", &iface)));
-        }
-
-        // Mark packets so they are routed through the tunnel
-        if !configuration.server {
-            if let Some(ports) = &configuration.ports {
-                for port in ports {
-                    rules.push(
-                        CommandGuard::new("iptables")
-                            .call(format!(
-                                "-t mangle -A OUTPUT -p udp --dport {} -j MARK --set-mark 0x{:X}",
-                                port, configuration.fwmark
-                            ))
-                            .cleanup(format!(
-                                "-t mangle -D OUTPUT -p udp --dport {} -j MARK --set-mark 0x{:X}",
-                                port, configuration.fwmark
-                            )),
-                    );
-                }
-            }
-        } else {
-            if let Some(ports) = &configuration.ports {
-                for port in ports {
-                    rules.push(
-                        CommandGuard::new("iptables")
-                            .call(format!(
-                                "-t mangle -A OUTPUT -p udp --sport {} -j MARK --set-mark 0x{:X}",
-                                port, configuration.fwmark
-                            ))
-                            .cleanup(format!(
-                                "-t mangle -D OUTPUT -p udp --sport {} -j MARK --set-mark 0x{:X}",
-                                port, configuration.fwmark
-                            )),
-                    );
-                }
+    if !configuration.server {
+        // On client redirect packets coming from the client to nfqueue
+        if let Some(ports) = &configuration.ports {
+            for port in ports {
+                rules.push(
+                    CommandGuard::new("iptables")
+                        .call(format!(
+                            "-t mangle -A OUTPUT -p udp --dport {} -m mark ! --mark {} -j NFQUEUE --queue-num {}",
+                            port, configuration.fwmark, configuration.queue
+                        ))
+                        .cleanup(format!(
+                            "-t mangle -D OUTPUT -p udp --dport {} -m mark ! --mark {} -j NFQUEUE --queue-num {}",
+                            port, configuration.fwmark, configuration.queue
+                        )),
+                );
             }
         }
-
-        rules.push(
-            CommandGuard::new("ip")
-                .call(format!(
-                    "rule add fwmark 0x{:X} table {}",
-                    configuration.fwmark, configuration.table
-                ))
-                .cleanup(format!(
-                    "rule del fwmark 0x{:X} table {}",
-                    configuration.fwmark, configuration.table
-                )),
-        );
-
-        rules.push(CommandGuard::new("ip").call(format!(
-            "route add default dev {} table {}",
-            &iface, configuration.table
-        )));
-
-        Ok(Tunnel {
-            dev: tun::create(
-                tun::Configuration::default()
-                    .name(&iface)
-                    .layer(tun::Layer::L3),
-            )?,
-            iface: iface.clone(),
-            custom,
-            _rules: rules,
-        })
-    }
-}
-
-impl<'a> Drop for Tunnel<'a> {
-    fn drop(&mut self) {
-        if !self.custom {
-            Command::new("ip")
-                .args(vec!["link", "delete", self.iface.as_str()])
-                .status()
-                .expect("Failed to execute `ip` command");
+    } else {
+        // On server redirect packets coming from the client to nfqueue
+        if let Some(ports) = &configuration.ports {
+            for port in ports {
+                rules.push(
+                    CommandGuard::new("iptables")
+                        .call(format!(
+                            "-t mangle -A OUTPUT -p udp --sport {} -m mark ! --mark {} -j NFQUEUE --queue-num {}",
+                            port, configuration.fwmark, configuration.queue
+                        ))
+                        .cleanup(format!(
+                            "-t mangle -D OUTPUT -p udp --sport {} -m mark ! --mark {} -j NFQUEUE --queue-num {}",
+                            port, configuration.fwmark, configuration.queue
+                        )),
+                );
+            }
         }
     }
+
+    rules
 }
