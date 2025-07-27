@@ -1,6 +1,20 @@
-# Unison
+# 🔗 Unison
 
-Lightweight UDP redundancy transport layer with a TUN-based duplicator and a NFQUEUE-driven deduplicator. Supports low-level routing, per-packet ID tagging, and out-of-order filtering. Designed to evolve into a transparent bonded multi-interface transport.
+> Proof of Concept - expect bugs and breaking changes.
+
+Flexible UDP transport layer designed for bi-directional multi-path delivery.
+
+## Features
+
+- 📋 Packet duplication across multiple interfaces for redundancy
+- 🔍 Packet deduplication, with out-of-order handling
+- 🔁 Seamless bidirectional handling of UDP traffic
+- 🔐 HMAC-based authentication for automatic iptables whitelisting
+
+## 🚧 Planned Features
+
+- 🎭 Source IP masquerading and restoration for single-source IP–dependent protocols like SRT
+- 🧠 Configurable heuristics for adaptive multi-path delivery
 
 ## Installation
 
