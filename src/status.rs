@@ -5,7 +5,7 @@ use std::sync::{
 
 use crate::types::{Stats, StatusConfiguration};
 
-use indicatif::ProgressBar;
+use indicatif::{MultiProgress, ProgressBar};
 use std::{thread, time::Duration};
 
 pub fn listen(
@@ -13,8 +13,13 @@ pub fn listen(
     running: Arc<AtomicBool>,
     stats: Arc<Stats>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let pb = ProgressBar::new_spinner();
-    pb.enable_steady_tick(Duration::from_millis(100));
+    let m = MultiProgress::new();
+    let tx = m.add(ProgressBar::new_spinner());
+    let rx = m.add(ProgressBar::new_spinner());
+    let extra = m.add(ProgressBar::new_spinner());
+    tx.enable_steady_tick(Duration::from_millis(100));
+    rx.enable_steady_tick(Duration::from_millis(100));
+    extra.enable_steady_tick(Duration::from_millis(100));
 
     let mut send_last_bytes = 0;
     let mut send_peak_throughput = 0.0;
@@ -64,17 +69,25 @@ pub fn listen(
                 .join(", ")
         };
 
-        let line = format!(
-            "✈️ {:.2} ({:.2}) Mbps | 🧮 {:.3} MB | 📦 {:>6} | 📥 {:.2} ({:.2}) Mbps | 🧮 {:.3} MB | ❌ {:>4} | 📦 {:>6} | 🌐 [{}] | ⏰ {} {}",
+        tx.set_message(format!(
+            "[TX] {:.2} ({:.2}) Mbps | 🧮 {:.3} MB | 📦 {:>6} |",
             send_throughput,
             send_peak_throughput,
             send_total,
             format!("{}", stats.send_current.load(Ordering::Relaxed)),
+        ));
+
+        rx.set_message(format!(
+            "[RX] {:.2} ({:.2}) Mbps | 🧮 {:.3} MB | 📦 {:>6} | ❌ {:>4}",
             recv_throughput,
             recv_peak_throughput,
             recv_total,
-            stats.recv_dropped.load(Ordering::Relaxed),
             format!("{}", stats.recv_current.load(Ordering::Relaxed)),
+            stats.recv_dropped.load(Ordering::Relaxed),
+        ));
+
+        extra.set_message(format!(
+            "🌐 {} | 🕒 {} | {}",
             configuration.interfaces.join(", "),
             uptime,
             if configuration.server {
@@ -82,9 +95,7 @@ pub fn listen(
             } else {
                 "".into()
             }
-        );
-
-        pb.set_message(line);
+        ));
 
         recv_last_bytes = recv_bytes;
         send_last_bytes = send_bytes;
