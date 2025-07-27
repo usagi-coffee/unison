@@ -89,12 +89,14 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             result
         });
 
-        scope.spawn(move || {
-            let running = status_running.clone();
-            let result = status_tx.send(status::listen(status_config, status_running, stats));
-            running.store(false, Ordering::Relaxed);
-            result
-        });
+        if !cli.silent {
+            scope.spawn(move || {
+                let running = status_running.clone();
+                let result = status_tx.send(status::listen(status_config, status_running, stats));
+                running.store(false, Ordering::Relaxed);
+                result
+            });
+        }
 
         rx.recv()?
     })?;

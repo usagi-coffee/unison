@@ -26,6 +26,9 @@ pub struct Cli {
     #[arg(long)]
     pub remote: Option<String>,
 
+    #[arg(long, action, default_value = "false")]
+    pub silent: bool,
+
     // Whitelist service port
     #[arg(long, default_value = "7566")]
     pub port: u16,
