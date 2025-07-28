@@ -1,11 +1,13 @@
+use std::collections::HashMap;
 use std::process::Command;
+use std::sync::Mutex;
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, atomic::AtomicBool};
 
 use clap::Parser;
 
 use types::{
-    Cli, ReceiverConfiguration, SenderConfiguration, Stats, StatusConfiguration,
+    Cli, Interface, ReceiverConfiguration, SenderConfiguration, Stats, StatusConfiguration,
     WhitelistConfiguration,
 };
 use utils::CommandGuard;
@@ -26,7 +28,15 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     forwarding();
     netfilter();
+    let _interfaces = interfaces(&cli);
 
+    let intefaces = Arc::new(
+        cli.interfaces
+            .iter()
+            .map(|name| Interface::raw(name.clone()))
+            .collect::<Result<Vec<_>, _>>()?,
+    );
+    let sources = Arc::new(Mutex::new(HashMap::new()));
     let running = Arc::new(AtomicBool::new(true));
     let stats = Arc::new(Stats::new());
 
@@ -42,16 +52,22 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
         let receiver_running = running.clone();
         let receiver_stats = stats.clone();
+        let receiver_interfaces = intefaces.clone();
+        let receiver_sources = sources.clone();
         let receiver_config = ReceiverConfiguration::from(cli.clone());
         let receiver_tx = tx.clone();
 
         let sender_running = running.clone();
         let sender_stats = stats.clone();
+        let sender_interfaces = intefaces.clone();
+        let sender_sources = sources.clone();
         let sender_config = SenderConfiguration::from(cli.clone());
         let sender_tx = tx.clone();
 
         let whitelist_running = running.clone();
         let whitelist_stats = stats.clone();
+        let whitelist_interfaces = intefaces.clone();
+        let whitelist_sources = sources.clone();
         let whitelist_config = WhitelistConfiguration::from(cli.clone());
         let whitelist_tx = tx.clone();
 
@@ -63,6 +79,8 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             let running = receiver_running.clone();
             let result = receiver_tx.send(receiver::listen(
                 receiver_config,
+                receiver_interfaces,
+                receiver_sources,
                 receiver_running,
                 receiver_stats,
             ));
@@ -72,8 +90,13 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
         scope.spawn(move || {
             let running = sender_running.clone();
-            let result =
-                sender_tx.send(sender::listen(sender_config, sender_running, sender_stats));
+            let result = sender_tx.send(sender::listen(
+                sender_config,
+                sender_interfaces,
+                sender_sources,
+                sender_running,
+                sender_stats,
+            ));
             running.store(false, Ordering::Relaxed);
             result
         });
@@ -82,6 +105,8 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             let running = running.clone();
             let result = whitelist_tx.send(whitelist::listen(
                 whitelist_config,
+                whitelist_interfaces,
+                whitelist_sources,
                 whitelist_running,
                 whitelist_stats,
             ));
@@ -115,4 +140,17 @@ pub fn netfilter() {
         .expect("Failed to load netfilter_queue module");
 
     assert!(status.success(), "Failed to load netfilter_queue module");
+}
+
+pub fn interfaces(cli: &Cli) -> Vec<CommandGuard> {
+    let mut rules = Vec::new();
+    if let Some(snat) = cli.snat {
+        rules.push(
+            CommandGuard::new("ip")
+                .call(format!("addr add {}/32 dev lo", snat))
+                .cleanup(format!("addr del {}/32 dev lo", snat)),
+        );
+    }
+
+    rules
 }

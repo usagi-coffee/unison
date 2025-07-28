@@ -1,7 +1,3 @@
-use libc::{IP_HDRINCL, IPPROTO_IP, SO_BINDTODEVICE, SO_MARK, SOL_SOCKET, setsockopt};
-use socket2::Socket;
-use std::io;
-use std::os::unix::io::AsRawFd;
 use std::process::Command;
 
 #[allow(dead_code)]
@@ -21,61 +17,6 @@ pub fn interfaces() -> Vec<String> {
     }
 
     interfaces
-}
-
-pub fn bind_to_device(sock: &Socket, ifname: &str) -> io::Result<()> {
-    let fd = sock.as_raw_fd();
-    let ifname_cstr = std::ffi::CString::new(ifname).unwrap();
-    let res = unsafe {
-        setsockopt(
-            fd,
-            SOL_SOCKET,
-            SO_BINDTODEVICE,
-            ifname_cstr.as_ptr() as *const _,
-            ifname.len() as u32,
-        )
-    };
-    if res != 0 {
-        return Err(io::Error::last_os_error());
-    }
-    Ok(())
-}
-
-pub fn set_mark(sock: &Socket, mark: u32) -> io::Result<()> {
-    let fd = sock.as_raw_fd();
-    let res = unsafe {
-        setsockopt(
-            fd,
-            SOL_SOCKET,
-            SO_MARK,
-            &mark as *const u32 as *const libc::c_void,
-            std::mem::size_of::<u32>() as libc::socklen_t,
-        )
-    };
-
-    if res != 0 {
-        return Err(io::Error::last_os_error());
-    }
-    Ok(())
-}
-
-#[allow(dead_code)]
-pub fn set_header_included(sock: &Socket) -> io::Result<()> {
-    let fd = sock.as_raw_fd();
-    let hdrincl: i32 = 1;
-    let res = unsafe {
-        setsockopt(
-            fd,
-            IPPROTO_IP,
-            IP_HDRINCL,
-            &hdrincl as *const _ as *const _,
-            std::mem::size_of::<i32>() as u32,
-        )
-    };
-    if res != 0 {
-        return Err(io::Error::last_os_error());
-    }
-    Ok(())
 }
 
 pub struct CommandGuard<'a> {

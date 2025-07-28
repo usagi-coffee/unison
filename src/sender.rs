@@ -1,19 +1,22 @@
+use std::collections::HashMap;
 use std::net::{SocketAddr, SocketAddrV4};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use nfq::{Queue, Verdict};
 use pnet::packet::ip::IpNextHeaderProtocols;
 use pnet::packet::ipv4::{Ipv4Packet, MutableIpv4Packet};
 use pnet::packet::udp::MutableUdpPacket;
-use socket2::{Domain, Protocol, SockAddr, Socket, Type};
+use socket2::SockAddr;
 
-use crate::types::{SenderConfiguration, Stats};
-use crate::utils::{CommandGuard, bind_to_device, set_header_included, set_mark};
+use crate::types::{Interface, SenderConfiguration, Source, Stats};
+use crate::utils::CommandGuard;
 
 pub fn listen(
     configuration: SenderConfiguration,
+    interfaces: Arc<Vec<Interface>>,
+    sources: Arc<Mutex<HashMap<u16, Source>>>,
     running: Arc<AtomicBool>,
     stats: Arc<Stats>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -47,6 +50,10 @@ pub fn listen(
             && ip_packet.get_next_level_protocol() == IpNextHeaderProtocols::Udp
         {
             let ip_header_len = (ip_packet.get_header_length() * 4) as usize;
+            let src_port = {
+                let udp_header = &packet[ip_header_len..ip_header_len + 4];
+                (udp_header[0] as u16) << 8 | (udp_header[1] as u16)
+            };
             let dst = ip_packet.get_destination();
             let dst_port = {
                 let udp_header = &packet[ip_header_len..ip_header_len + 4];
@@ -64,37 +71,55 @@ pub fn listen(
                     ip_packet.set_total_length(new_ip_len);
                     ip_packet.set_checksum(0);
 
-                    for ifname in &configuration.interfaces {
-                        let socket = Socket::new(
-                            Domain::IPV4,
-                            Type::from(libc::SOCK_RAW),
-                            Some(Protocol::from(libc::IPPROTO_RAW)),
-                        )?;
-                        bind_to_device(&socket, &ifname)?;
-                        set_header_included(&socket)?;
-                        set_mark(&socket, configuration.fwmark)?;
+                    for interface in interfaces.iter() {
+                        let socket = interface.socket.write().unwrap();
+                        socket.set_mark(configuration.fwmark)?;
 
-                        let dst_sock =
-                            SockAddr::from(SocketAddr::V4(SocketAddrV4::new(dst, dst_port)));
+                        if let Some(_) = configuration.snat {
+                            if let Some(source) = sources.lock().unwrap().get(&src_port) {
+                                for addr in &source.addrs {
+                                    let mut packet = packet.clone();
+                                    let sock_addr = addr.as_socket_ipv4().unwrap();
+                                    packet[12..16].copy_from_slice(&source.ip.octets());
+                                    packet[20..22].copy_from_slice(&source.port.to_be_bytes());
+                                    packet[16..20].copy_from_slice(&sock_addr.ip().octets());
+                                    packet[22..24].copy_from_slice(&sock_addr.port().to_be_bytes());
 
-                        if let Err(error) = socket.send_to(&packet, &dst_sock.into()) {
-                            eprintln!("sender: {}: failed to send with {}", ifname, error);
+                                    if let Err(error) = socket.send_to(&packet, &addr) {
+                                        eprintln!(
+                                            "sender: {}: failed to send with {}",
+                                            interface.name, error
+                                        );
+                                    }
+                                }
+                            }
+                        } else {
+                            let addr =
+                                SockAddr::from(SocketAddr::V4(SocketAddrV4::new(dst, dst_port)));
+                            if let Err(error) = socket.send_to(&packet, &addr.into()) {
+                                eprintln!(
+                                    "sender: {}: failed to send with {}",
+                                    interface.name, error
+                                );
+                            }
                         }
+
+                        socket.set_mark(0)?;
                     }
 
                     id += 1;
                 }
             }
-
-            msg.set_verdict(Verdict::Drop);
-            queue.verdict(msg)?;
-
-            stats.send_total.fetch_add(1, Ordering::Relaxed);
-            stats
-                .send_bytes
-                .fetch_add(packet.len() as u64, Ordering::Relaxed);
-            stats.send_current.store(id as u64, Ordering::Relaxed);
         }
+
+        msg.set_verdict(Verdict::Drop);
+        queue.verdict(msg)?;
+
+        stats.send_total.fetch_add(1, Ordering::Relaxed);
+        stats
+            .send_bytes
+            .fetch_add(packet.len() as u64, Ordering::Relaxed);
+        stats.send_current.store(id as u64, Ordering::Relaxed);
     }
 
     Ok(())

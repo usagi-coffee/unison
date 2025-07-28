@@ -10,10 +10,10 @@ Flexible UDP transport layer designed for bi-directional multi-path delivery.
 - 🔍 Packet deduplication, with out-of-order handling
 - 🔁 Seamless bidirectional handling of UDP traffic
 - 🔐 HMAC-based authentication for automatic iptables whitelisting
+- 🎭 Source IP masquerading and restoration for single-source IP–dependent protocols like SRT
 
 ## 🚧 Planned Features
 
-- 🎭 Source IP masquerading and restoration for single-source IP–dependent protocols like SRT
 - 🧠 Configurable heuristics for adaptive multi-path delivery
 
 ## ⚙️ Installation

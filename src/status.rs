@@ -61,7 +61,7 @@ pub fn listen(
         let whitelisted = {
             stats
                 .whitelisted
-                .lock()
+                .read()
                 .unwrap()
                 .iter()
                 .map(|s| s.to_string())
