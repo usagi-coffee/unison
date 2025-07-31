@@ -75,10 +75,11 @@ pub fn listen(
                         let socket = interface.socket.write().unwrap();
                         socket.set_mark(configuration.fwmark)?;
 
+                        let mut packet = packet.clone();
+
                         if let Some(_) = configuration.snat {
                             if let Some(source) = sources.lock().unwrap().get(&src_port) {
                                 for addr in &source.addrs {
-                                    let mut packet = packet.clone();
                                     let sock_addr = addr.as_socket_ipv4().unwrap();
                                     packet[12..16].copy_from_slice(&source.ip.octets());
                                     packet[20..22].copy_from_slice(&source.port.to_be_bytes());
@@ -94,6 +95,8 @@ pub fn listen(
                                 }
                             }
                         } else {
+                            packet[12..16].copy_from_slice(&interface.ip.octets());
+                            socket.set_header_included_v4(true)?;
                             let addr =
                                 SockAddr::from(SocketAddr::V4(SocketAddrV4::new(dst, dst_port)));
                             if let Err(error) = socket.send_to(&packet, &addr.into()) {

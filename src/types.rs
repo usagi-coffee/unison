@@ -12,6 +12,8 @@ use clap::{Parser, arg, command};
 use o2o::o2o;
 use socket2::SockAddr;
 
+use crate::utils::interface_ip;
+
 #[derive(Clone, Parser, Debug)]
 #[command(author, version, about)]
 pub struct Cli {
@@ -122,6 +124,7 @@ pub struct StatusConfiguration {
 
 pub struct Interface {
     pub name: String,
+    pub ip: Ipv4Addr,
     pub socket: RwLock<socket2::Socket>,
 }
 
@@ -135,6 +138,7 @@ impl Interface {
         socket.bind_device(Some(name.as_bytes()))?;
         socket.set_header_included_v4(true)?;
         Ok(Self {
+            ip: interface_ip(name.as_str()).unwrap(),
             name,
             socket: RwLock::new(socket),
         })
@@ -148,6 +152,7 @@ impl Interface {
         )?;
         socket.bind_device(Some(name.as_bytes()))?;
         Ok(Self {
+            ip: interface_ip(name.as_str()).unwrap(),
             name,
             socket: RwLock::new(socket),
         })
@@ -158,6 +163,7 @@ impl Clone for Interface {
     fn clone(&self) -> Self {
         Self {
             name: self.name.clone(),
+            ip: self.ip,
             socket: RwLock::new(self.socket.read().unwrap().try_clone().unwrap()),
         }
     }

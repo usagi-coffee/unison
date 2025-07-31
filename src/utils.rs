@@ -1,4 +1,4 @@
-use std::process::Command;
+use std::{net::Ipv4Addr, process::Command};
 
 #[allow(dead_code)]
 pub fn interfaces() -> Vec<String> {
@@ -17,6 +17,30 @@ pub fn interfaces() -> Vec<String> {
     }
 
     interfaces
+}
+
+pub fn interface_ip(iface: &str) -> Option<Ipv4Addr> {
+    let output = Command::new("ip")
+        .args(&["-o", "-4", "addr", "show", "dev", iface])
+        .output()
+        .expect("Failed to execute ip");
+
+    if !output.status.success() {
+        return None;
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    for line in stdout.lines() {
+        let fields: Vec<&str> = line.split_whitespace().collect();
+        if let Some(cidr) = fields.get(3) {
+            if let Some(ip) = cidr.split('/').next() {
+                return Some(ip.parse().expect("Invalid IP address"));
+            }
+        }
+    }
+
+    None
 }
 
 pub struct CommandGuard<'a> {
