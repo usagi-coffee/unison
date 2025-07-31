@@ -37,7 +37,7 @@ pub fn listen(
     let mut map: BTreeMap<u32, (nfq::Message, MessageStatus)> = BTreeMap::new();
     let mut current: u32 = 0;
 
-    let last = Instant::now();
+    let mut last = Instant::now();
 
     stats.recv_ready.store(true, Ordering::Relaxed);
     while running.load(Ordering::Relaxed) {
@@ -48,7 +48,7 @@ pub fn listen(
                 continue;
             }
             Err(error) => {
-                println!("receiver: {}", error);
+                eprintln!("receiver: {}", error);
                 break;
             }
         };
@@ -68,16 +68,9 @@ pub fn listen(
                 msg.set_verdict(Verdict::Accept);
                 queue.verdict(msg)?;
                 current = id + 1;
+                last = Instant::now();
             }
-            // Replace buffered message if it's newer or set new current
             MessageStatus::Forwarded(id) if id > current => {
-                if Instant::now().duration_since(last).as_millis() > configuration.timeout {
-                    if let Some((first, _)) = map.first_key_value() {
-                        println!("receiver: timeout, skipping until {}", first);
-                        current = *first;
-                    }
-                }
-
                 // If there already was a buffered message with the same ID, drop it
                 if let Some((mut buffered, _)) = map.insert(id, (msg, status)) {
                     buffered.set_verdict(Verdict::Drop);
@@ -118,15 +111,9 @@ pub fn listen(
 
                 queue.verdict(msg)?;
                 current = id + 1;
+                last = Instant::now();
             }
             MessageStatus::Proxied(id, _, _) if id > current => {
-                if Instant::now().duration_since(last).as_millis() > configuration.timeout {
-                    if let Some((first, _)) = map.first_key_value() {
-                        println!("receiver: timeout, skipping until {}", first);
-                        current = *first;
-                    }
-                }
-
                 if let Some((mut buffered, _)) = map.insert(id, (msg, status)) {
                     buffered.set_verdict(Verdict::Drop);
                     queue.verdict(buffered)?;
@@ -145,8 +132,16 @@ pub fn listen(
                 queue.verdict(msg)?;
                 stats.recv_dropped.fetch_add(1, Ordering::Relaxed);
             }
-            MessageStatus::Forwarded(_) | MessageStatus::Proxied(_, _, _) => {
-                unreachable!("Should have matched above")
+            _ => unreachable!("Unexpected message status"),
+        }
+
+        // Drop messages that have been buffered for too long
+        if Instant::now().duration_since(last).as_millis() > configuration.timeout {
+            if let Some((first, _)) = map.first_key_value() {
+                stats
+                    .recv_dropped
+                    .fetch_add((*first - current) as u64, Ordering::Relaxed);
+                current = *first;
             }
         }
 
@@ -157,12 +152,13 @@ pub fn listen(
                     msg.set_verdict(Verdict::Accept);
                     queue.verdict(msg)?;
                     current = id + 1;
+                    last = Instant::now();
                 }
                 MessageStatus::Proxied(id, source, destination) => {
                     // SAFETY: Proxied messages are only created when SNAT is configured
                     let snat = unsafe { configuration.snat.unwrap_unchecked() };
 
-                    if let Err(error) = sources
+                    if let Ok(socket) = sources
                         .lock()
                         .unwrap()
                         .entry(destination.port())
@@ -176,16 +172,16 @@ pub fn listen(
                         )))
                         .socket
                         .read()
-                        .unwrap()
-                        .send_to(msg.get_payload(), &destination.into())
                     {
-                        println!("receiver: failed to send to {}: {}", destination, error);
+                        socket.set_header_included_v4(true)?;
+                        socket.send_to(msg.get_payload(), &destination.into())?;
                     }
 
                     // We do not forward so drop the message
                     msg.set_verdict(Verdict::Drop);
                     queue.verdict(msg)?;
                     current = id + 1;
+                    last = Instant::now();
                 }
                 MessageStatus::Invalid => {
                     msg.set_verdict(Verdict::Drop);
