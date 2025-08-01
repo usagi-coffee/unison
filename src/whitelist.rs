@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::net::{SocketAddrV4, UdpSocket};
+use std::net::UdpSocket;
 use std::sync::Mutex;
 use std::sync::{
     Arc,
@@ -38,7 +38,14 @@ fn server(
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let mut rules = vec![];
 
-    let socket = UdpSocket::bind(format!("0.0.0.0:{}", configuration.port))?;
+    let mac = HmacSha256::new_from_slice(
+        configuration
+            .secret
+            .ok_or("Secret must be provided in order to use authentication")?
+            .as_bytes(),
+    )?;
+
+    let socket = UdpSocket::bind(format!("0.0.0.0:{}", 7566))?;
     socket.set_nonblocking(true)?;
 
     const WINDOW_SIZE: usize = 60;
@@ -69,7 +76,7 @@ fn server(
             {
                 for i in 0..WINDOW_SIZE {
                     let current = now.as_secs() - i as u64;
-                    let mut mac = HmacSha256::new_from_slice(configuration.secret.as_bytes())?;
+                    let mut mac = mac.clone();
                     mac.update(format!("{}", current).as_bytes());
 
                     if mac.verify_slice(&buf[..amt]).is_ok() {
@@ -103,19 +110,26 @@ fn client(
     running: Arc<AtomicBool>,
     _stats: Arc<Stats>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let mac = HmacSha256::new_from_slice(
+        configuration
+            .secret
+            .ok_or("Secret must be provided in order to use authentication")?
+            .as_bytes(),
+    )?;
+
     while running.load(Ordering::Relaxed) {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("Time went backwards");
 
         if let Some(remote) = configuration.remote {
-            let addr = SockAddr::from(SocketAddrV4::new(remote, configuration.port));
+            let addr = SockAddr::from(remote);
 
             for interface in interfaces.iter() {
                 let interface =
                     Interface::udp(interface.name.clone()).expect("Failed to create UDP interface");
 
-                let mut mac = HmacSha256::new_from_slice(configuration.secret.as_bytes())?;
+                let mut mac = mac.clone();
                 mac.update(format!("{}", now.as_secs()).as_bytes());
 
                 let mut buf = [0u8; 32];

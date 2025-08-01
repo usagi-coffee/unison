@@ -102,18 +102,20 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             result
         });
 
-        scope.spawn(move || {
-            let running = running.clone();
-            let result = whitelist_tx.send(whitelist::listen(
-                whitelist_config,
-                whitelist_interfaces,
-                whitelist_sources,
-                whitelist_running,
-                whitelist_stats,
-            ));
-            running.store(false, Ordering::Relaxed);
-            result
-        });
+        if cli.remote.is_some() || (cli.server && cli.secret.is_some()) {
+            scope.spawn(move || {
+                let running = running.clone();
+                let result = whitelist_tx.send(whitelist::listen(
+                    whitelist_config,
+                    whitelist_interfaces,
+                    whitelist_sources,
+                    whitelist_running,
+                    whitelist_stats,
+                ));
+                running.store(false, Ordering::Relaxed);
+                result
+            });
+        }
 
         if !cli.silent {
             scope.spawn(move || {

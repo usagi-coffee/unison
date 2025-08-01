@@ -10,7 +10,7 @@ use std::{thread, time::Duration};
 
 pub fn listen(
     configuration: StatusConfiguration,
-    interfaces: Arc<Vec<Interface>>,
+    _interfaces: Arc<Vec<Interface>>,
     running: Arc<AtomicBool>,
     stats: Arc<Stats>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {

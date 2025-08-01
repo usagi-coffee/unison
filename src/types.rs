@@ -20,22 +20,8 @@ pub struct Cli {
     #[arg(long, default_value = "false")]
     pub server: bool,
 
-    // Password used for the remote
-    #[arg(
-        long,
-        default_value = "f9e5996d942a307decbd7d43f20eb4a85b80e1e044f2cfa33f5110f01a4d52b0"
-    )]
-    pub secret: String,
-
-    #[arg(long)]
-    pub remote: Option<Ipv4Addr>,
-
     #[arg(long, action, default_value = "false")]
     pub silent: bool,
-
-    // Whitelist service port
-    #[arg(long, default_value = "7566")]
-    pub port: u16,
 
     /// Receiver
     /// NFQUEUE socket number
@@ -75,11 +61,19 @@ pub struct Cli {
     #[arg(long, required = true, num_args = 1..)]
     pub interfaces: Vec<String>,
 
-    /// SNAT
-    #[arg(long, default_value = "17566")]
-    pub snat_port: u16,
+    /// SNAT address that should the packets appear to be sent FROM
     #[arg(long)]
     pub snat: Option<SocketAddrV4>,
+
+    /// Extra features, might be removed in the future
+
+    // Remote address
+    #[arg(long)]
+    pub remote: Option<SocketAddrV4>,
+
+    // Secret used for HMAC whitelisting
+    #[arg(long)]
+    pub secret: Option<String>,
 }
 
 #[derive(o2o)]
@@ -110,9 +104,8 @@ pub struct ReceiverConfiguration {
 #[from_owned(Cli)]
 pub struct WhitelistConfiguration {
     pub server: bool,
-    pub remote: Option<Ipv4Addr>,
-    pub port: u16,
-    pub secret: String,
+    pub remote: Option<SocketAddrV4>,
+    pub secret: Option<String>,
 }
 
 #[derive(o2o)]
