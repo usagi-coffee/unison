@@ -108,6 +108,11 @@ pub fn listen(
                         }
 
                         socket.set_mark(0)?;
+
+                        interface.send_packets.fetch_add(1, Ordering::Relaxed);
+                        interface
+                            .send_bytes
+                            .fetch_add(packet.len() as u64, Ordering::Relaxed);
                     }
 
                     id += 1;

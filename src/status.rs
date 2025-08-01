@@ -3,18 +3,20 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
 };
 
-use crate::types::{Stats, StatusConfiguration};
+use crate::types::{Interface, Stats, StatusConfiguration};
 
 use indicatif::{MultiProgress, ProgressBar};
 use std::{thread, time::Duration};
 
 pub fn listen(
     configuration: StatusConfiguration,
+    interfaces: Arc<Vec<Interface>>,
     running: Arc<AtomicBool>,
     stats: Arc<Stats>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let m = MultiProgress::new();
     let tx = m.add(ProgressBar::new_spinner());
+
     let rx = m.add(ProgressBar::new_spinner());
     let extra = m.add(ProgressBar::new_spinner());
     tx.enable_steady_tick(Duration::from_millis(100));

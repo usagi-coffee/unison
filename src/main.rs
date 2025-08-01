@@ -72,6 +72,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let whitelist_tx = tx.clone();
 
         let status_running = running.clone();
+        let status_interfaces = intefaces.clone();
         let status_config = StatusConfiguration::from(cli.clone());
         let status_tx = tx.clone();
 
@@ -117,7 +118,12 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         if !cli.silent {
             scope.spawn(move || {
                 let running = status_running.clone();
-                let result = status_tx.send(status::listen(status_config, status_running, stats));
+                let result = status_tx.send(status::listen(
+                    status_config,
+                    status_interfaces,
+                    status_running,
+                    stats,
+                ));
                 running.store(false, Ordering::Relaxed);
                 result
             });
@@ -147,8 +153,8 @@ pub fn interfaces(cli: &Cli) -> Vec<CommandGuard> {
     if let Some(snat) = cli.snat {
         rules.push(
             CommandGuard::new("ip")
-                .call(format!("addr add {}/32 dev lo", snat))
-                .cleanup(format!("addr del {}/32 dev lo", snat)),
+                .call(format!("addr add {}/32 dev lo", snat.ip()))
+                .cleanup(format!("addr del {}/32 dev lo", snat.ip())),
         );
     }
 

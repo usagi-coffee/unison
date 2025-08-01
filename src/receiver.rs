@@ -239,7 +239,8 @@ fn process_message(msg: &mut nfq::Message, configuration: &ReceiverConfiguration
                     let destination = ip_packet.get_destination();
                     let destination_port = udp_packet.get_destination();
 
-                    ip_packet.set_source(*snat);
+                    ip_packet.set_source(*snat.ip());
+                    udp_packet.set_source(snat.port());
                     msg.set_payload(payload);
 
                     return MessageStatus::Proxied(
@@ -288,13 +289,13 @@ fn iptables(configuration: &ReceiverConfiguration) -> Vec<CommandGuard<'_>> {
                           .call(format!(
                               "-t mangle -A INPUT -p udp --dport {} ! -s {} -m mark --mark 0 -j NFQUEUE --queue-num {}",
                               port,
-                              if configuration.snat.is_some() { configuration.snat.unwrap() } else { Ipv4Addr::new(1, 2, 3, 4) },
+                              if configuration.snat.is_some() { configuration.snat.unwrap().ip().clone() } else { Ipv4Addr::new(1, 2, 3, 4) },
                               configuration.recv_queue
                           ))
                           .cleanup(format!(
                               "-t mangle -D INPUT -p udp --dport {} ! -s {} -m mark --mark 0 -j NFQUEUE --queue-num {}",
                               port,
-                              if configuration.snat.is_some() { configuration.snat.unwrap() } else { Ipv4Addr::new(1, 2, 3, 4) },
+                              if configuration.snat.is_some() { configuration.snat.unwrap().ip().clone() } else { Ipv4Addr::new(1, 2, 3, 4) },
                               configuration.recv_queue
                           ))
                     );

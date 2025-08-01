@@ -79,7 +79,7 @@ pub struct Cli {
     #[arg(long, default_value = "17566")]
     pub snat_port: u16,
     #[arg(long)]
-    pub snat: Option<Ipv4Addr>,
+    pub snat: Option<SocketAddrV4>,
 }
 
 #[derive(o2o)]
@@ -91,7 +91,7 @@ pub struct SenderConfiguration {
     pub queue_max_len: u32,
     pub ports: Option<Vec<u16>>,
 
-    pub snat: Option<Ipv4Addr>,
+    pub snat: Option<SocketAddrV4>,
 }
 
 #[derive(o2o)]
@@ -103,7 +103,7 @@ pub struct ReceiverConfiguration {
     pub recv_queue_max_len: u32,
     pub timeout: u128,
 
-    pub snat: Option<Ipv4Addr>,
+    pub snat: Option<SocketAddrV4>,
 }
 
 #[derive(o2o)]
@@ -126,6 +126,9 @@ pub struct Interface {
     pub name: String,
     pub ip: Ipv4Addr,
     pub socket: RwLock<socket2::Socket>,
+
+    pub send_packets: AtomicU64,
+    pub send_bytes: AtomicU64,
 }
 
 impl Interface {
@@ -141,6 +144,8 @@ impl Interface {
             ip: interface_ip(name.as_str()).unwrap(),
             name,
             socket: RwLock::new(socket),
+            send_packets: AtomicU64::new(0),
+            send_bytes: AtomicU64::new(0),
         })
     }
 
@@ -155,6 +160,8 @@ impl Interface {
             ip: interface_ip(name.as_str()).unwrap(),
             name,
             socket: RwLock::new(socket),
+            send_packets: AtomicU64::new(0),
+            send_bytes: AtomicU64::new(0),
         })
     }
 }
@@ -165,6 +172,8 @@ impl Clone for Interface {
             name: self.name.clone(),
             ip: self.ip,
             socket: RwLock::new(self.socket.read().unwrap().try_clone().unwrap()),
+            send_packets: AtomicU64::new(0),
+            send_bytes: AtomicU64::new(0),
         }
     }
 }
@@ -180,14 +189,14 @@ impl Source {
     pub fn new(
         ip: Ipv4Addr,
         port: u16,
-        snat: Ipv4Addr,
+        snat: SocketAddrV4,
     ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let socket = socket2::Socket::new(
             socket2::Domain::IPV4,
             socket2::Type::from(libc::SOCK_RAW),
             Some(socket2::Protocol::from(libc::IPPROTO_UDP)),
         )?;
-        socket.bind(&SockAddr::from(SocketAddrV4::new(snat, 0)))?;
+        socket.bind(&SockAddr::from(snat))?;
         Ok(Self {
             ip,
             port,
