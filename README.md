@@ -24,28 +24,44 @@ cargo install --git https://github.com/usagi-coffee/unison --locked
 
 ## 📡 Client
 
-This configuration assumes two interfaces `stream0` and `stream1` for sending and receiving packets, duplicates the UDP traffic that targets port `8888` of the server.
+This example assumes two interfaces `stream0` and `stream1` for sending and receiving packets, duplicates the UDP traffic that targets port `8888` of the server, port 8888 is opened on the server side.
 
 ```bash
 unison --ports 8888 --interfaces stream0 stream1
-
-# Optional: If your traffic is bi-directional then you might need to allow the port on the client.
-iptables -A INPUT -i stream -p udp --dport 8888 -j ACCEPT
-iptables -A INPUT -i stream -p udp --dport 8888 -j ACCEPT
 ```
 
 ## 🖥️ Server
 
-This configuration assumes two interfaces `recv0` and `recv1` for receiving and sending the packets back, client is `192.168.50.31` and traffic goes over port `8888`.
+This configuration assumes one interface `eth0` for receiving and sending the packets back, the traffic goes over port `8888`.
 
 ```bash
-# Optional: If you want to use HMAC-based authentication
-iptables -A INPUT -p udp --dport 7566 -j ACCEPT
-
 # Accept ports
 iptables -A INPUT -i recv0 -p udp --dport 8888 -j ACCEPT
 iptables -A INPUT -i recv1 -p udp --dport 8888 -j ACCEPT
 
 # Launch unison
-unison --server --ports 8888 --interfaces recv0 recv1
+unison --server --ports 8888 --interfaces eth0
+```
+
+## 🎭 Consistent Source IP/Port
+
+Some protocols—like SRT, RTP, or other connection-oriented UDP systems—require all packets to originate from a single consistent source IP and port. When using multi-path transport, this consistency can be lost, leading to session instability or rejections.
+
+Unison supports source address and port rewriting (SNAT) to preserve consistency. This is done at the packet level and ensures that the receiver sees all packets as coming from the same source.
+
+```bash
+# Packets will appear as to come from 10.64.0.1:1337 to sockets on the server
+unison --server --snat 10.64.0.1:1337 --ports 8888 --interfaces eth0
+```
+
+## 🔐 HMAC Authentication and IP Whitelisting
+
+To prevent unauthorized traffic injection, Unison supports HMAC-based authentication using a shared secret. This ensures that only clients who know the secret can send packets, and their IPs are automatically whitelisted via iptables on the receiver.
+
+```bash
+# Client
+unison --remote 1.2.3.4 --secret mysecret --ports 8888 --interfaces stream0 stream1
+
+# Server
+unison --server --secret mysecret --ports 8888 --interfaces eth0
 ```
