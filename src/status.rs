@@ -3,7 +3,10 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
 };
 
-use crate::types::{Interface, Stats, StatusConfiguration};
+use crate::{
+    types::{Interface, Stats, StatusConfiguration},
+    utils::tc_backlog,
+};
 
 use indicatif::{MultiProgress, ProgressBar};
 use std::{thread, time::Duration};
@@ -11,11 +14,16 @@ use std::{thread, time::Duration};
 pub fn listen(
     progress: Arc<MultiProgress>,
     configuration: StatusConfiguration,
-    _interfaces: Arc<Vec<Interface>>,
+    interfaces: Arc<Vec<Interface>>,
     running: Arc<AtomicBool>,
     stats: Arc<Stats>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let tx = progress.add(ProgressBar::new_spinner());
+    for interface in interfaces.iter() {
+        interface
+            .send_progress
+            .get_or_init(|| Arc::new(progress.add(ProgressBar::new_spinner())));
+    }
 
     let rx = progress.add(ProgressBar::new_spinner());
     let extra = progress.add(ProgressBar::new_spinner());
@@ -64,7 +72,6 @@ pub fn listen(
             stats
                 .whitelisted
                 .read()
-                .unwrap()
                 .iter()
                 .map(|s| s.to_string())
                 .collect::<Vec<_>>()
@@ -72,15 +79,41 @@ pub fn listen(
         };
 
         tx.set_message(format!(
-            "[TX] {:.2} ({:.2}) Mbps | 🧮 {:.3} MB | 📦 {:>6} |",
+            "[TX] ----------- {:.2} ({:.2}) Mbps | 🧮 {:.3} MB | 📦 {:>6} |",
             send_throughput,
             send_peak_throughput,
             send_total,
             format!("{}", stats.send_current.load(Ordering::Relaxed)),
         ));
 
+        for interface in interfaces.iter() {
+            let send_bytes = interface.send_bytes.load(Ordering::Relaxed);
+            let send_total = (send_bytes * 8) / 1_000_000;
+            let send_throughput = ((send_bytes - send_last_bytes) * 8) as f64 / 1_000_000.0;
+            if send_throughput > send_peak_throughput {
+                send_peak_throughput = send_throughput;
+            }
+
+            let bytes = tc_backlog(interface.name.as_str()).unwrap_or(0);
+
+            let interface_tx = unsafe { interface.send_progress.get().unwrap_unchecked() };
+            interface_tx.set_message(format!(
+                "|--- {} {} {:.2} ({:.2}) Mbps | 🧮 {:.3} MB | ⏳ {:>6} |",
+                interface.name,
+                " ".repeat(usize::max(0, 10 - interface.name.len())),
+                send_throughput,
+                send_peak_throughput,
+                send_total,
+                bytes / 1_000_000
+            ));
+
+            interface
+                .send_last_bytes
+                .store(send_bytes, Ordering::Relaxed);
+        }
+
         rx.set_message(format!(
-            "[RX] {:.2} ({:.2}) Mbps | 🧮 {:.3} MB | 📦 {:>6} | ❌ {:>4}",
+            "[RX] ----------- {:.2} ({:.2}) Mbps | 🧮 {:.3} MB | 📦 {:>6} | ❌ {:>4}",
             recv_throughput,
             recv_peak_throughput,
             recv_total,

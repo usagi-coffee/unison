@@ -1,6 +1,4 @@
-use std::collections::HashMap;
 use std::net::UdpSocket;
-use std::sync::Mutex;
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
@@ -13,18 +11,17 @@ use socket2::SockAddr;
 
 type HmacSha256 = Hmac<Sha256>;
 
-use crate::types::{Interface, Source, Stats, WhitelistConfiguration};
+use crate::types::{Interface, Stats, WhitelistConfiguration};
 use crate::utils::CommandGuard;
 
 pub fn listen(
     configuration: WhitelistConfiguration,
     interfaces: Arc<Vec<Interface>>,
-    sources: Arc<Mutex<HashMap<u16, Source>>>,
     running: Arc<AtomicBool>,
     stats: Arc<Stats>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     if configuration.server {
-        server(configuration, sources, running, stats)
+        server(configuration, running, stats)
     } else {
         client(configuration, interfaces, running, stats)
     }
@@ -32,7 +29,6 @@ pub fn listen(
 
 fn server(
     configuration: WhitelistConfiguration,
-    _sources: Arc<Mutex<HashMap<u16, Source>>>,
     running: Arc<AtomicBool>,
     stats: Arc<Stats>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -60,15 +56,7 @@ fn server(
             .duration_since(UNIX_EPOCH)
             .expect("Time went backwards");
 
-        let whitelisted = {
-            stats
-                .whitelisted
-                .read()
-                .unwrap()
-                .iter()
-                .cloned()
-                .collect::<Vec<_>>()
-        };
+        let whitelisted = { stats.whitelisted.read().iter().cloned().collect::<Vec<_>>() };
 
         match socket.recv_from(&mut buf) {
             Ok((amt, src))
@@ -89,7 +77,7 @@ fn server(
                                     .cleanup(format!("-D INPUT -s {} -j ACCEPT", src.ip())),
                             );
 
-                            stats.whitelisted.write().unwrap().push(src.ip());
+                            stats.whitelisted.write().push(src.ip());
                         }
                     }
                 }
@@ -135,7 +123,7 @@ fn client(
                 let mut buf = [0u8; 32];
                 mac.finalize_into((&mut buf).into());
 
-                if let Err(error) = interface.socket.write().unwrap().send_to(&buf, &addr) {
+                if let Err(error) = interface.socket.write().send_to(&buf, &addr) {
                     println!("Failed to send data: {}", error);
                 }
             }

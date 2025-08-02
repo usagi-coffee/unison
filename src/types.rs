@@ -1,15 +1,19 @@
 use std::{
+    collections::HashMap,
     marker::{Send, Sync},
     net::{IpAddr, Ipv4Addr, SocketAddrV4},
     sync::{
-        Arc, RwLock,
-        atomic::{AtomicBool, AtomicU64},
+        Arc, OnceLock,
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
     time::Instant,
 };
 
+use atomic_time::AtomicInstant;
 use clap::{Parser, arg, command};
+use indicatif::ProgressBar;
 use o2o::o2o;
+use parking_lot::{RwLock, lock_api::RwLockUpgradableReadGuard};
 use socket2::SockAddr;
 
 use crate::utils::interface_ip;
@@ -120,8 +124,10 @@ pub struct Interface {
     pub ip: Ipv4Addr,
     pub socket: RwLock<socket2::Socket>,
 
+    pub send_progress: OnceLock<Arc<ProgressBar>>,
     pub send_packets: AtomicU64,
     pub send_bytes: AtomicU64,
+    pub send_last_bytes: AtomicU64,
 }
 
 impl Interface {
@@ -137,8 +143,10 @@ impl Interface {
             ip: interface_ip(name.as_str()).unwrap(),
             name,
             socket: RwLock::new(socket),
+            send_progress: OnceLock::new(),
             send_packets: AtomicU64::new(0),
             send_bytes: AtomicU64::new(0),
+            send_last_bytes: AtomicU64::new(0),
         })
     }
 
@@ -153,8 +161,10 @@ impl Interface {
             ip: interface_ip(name.as_str()).unwrap(),
             name,
             socket: RwLock::new(socket),
+            send_progress: OnceLock::new(),
             send_packets: AtomicU64::new(0),
             send_bytes: AtomicU64::new(0),
+            send_last_bytes: AtomicU64::new(0),
         })
     }
 }
@@ -164,9 +174,11 @@ impl Clone for Interface {
         Self {
             name: self.name.clone(),
             ip: self.ip,
-            socket: RwLock::new(self.socket.read().unwrap().try_clone().unwrap()),
+            socket: RwLock::new(self.socket.read().try_clone().unwrap()),
+            send_progress: OnceLock::new(),
             send_packets: AtomicU64::new(0),
             send_bytes: AtomicU64::new(0),
+            send_last_bytes: AtomicU64::new(0),
         }
     }
 }
@@ -175,7 +187,7 @@ pub struct Source {
     pub ip: Ipv4Addr,
     pub port: u16,
     pub socket: RwLock<socket2::Socket>,
-    pub addrs: Vec<SockAddr>,
+    pub addrs: RwLock<HashMap<SockAddr, AtomicInstant>>,
 }
 
 impl Source {
@@ -194,13 +206,17 @@ impl Source {
             ip,
             port,
             socket: RwLock::new(socket),
-            addrs: vec![],
+            addrs: RwLock::new(HashMap::new()),
         })
     }
 
-    pub fn attach(&mut self, ip: SockAddr) -> &mut Self {
-        if !self.addrs.contains(&ip) {
-            self.addrs.push(ip);
+    pub fn attach(&self, ip: SockAddr) -> &Self {
+        let lock = self.addrs.upgradable_read();
+        if let Some(addr) = lock.get(&ip) {
+            addr.store(Instant::now(), Ordering::Relaxed);
+        } else {
+            let mut write = RwLockUpgradableReadGuard::upgrade(lock);
+            write.insert(ip, AtomicInstant::now());
         }
 
         self

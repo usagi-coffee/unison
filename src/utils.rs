@@ -117,3 +117,24 @@ impl<'a> Drop for CommandGuard<'a> {
         }
     }
 }
+
+pub fn tc_backlog(interface: &str) -> Option<u64> {
+    let output = Command::new("tc")
+        .args(["-s", "qdisc", "show", "dev", interface])
+        .output()
+        .ok()?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    for line in stdout.lines() {
+        if line.contains("backlog") {
+            let parts: Vec<_> = line.split_whitespace().collect();
+            for (i, &part) in parts.iter().enumerate() {
+                if part == "backlog" {
+                    return Some(parts.get(i + 2)?.trim_end_matches('b').parse().ok()?);
+                }
+            }
+        }
+    }
+    None
+}

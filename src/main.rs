@@ -1,10 +1,11 @@
 use std::collections::HashMap;
 use std::process::Command;
-use std::sync::Mutex;
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, atomic::AtomicBool};
 
 use clap::Parser;
+
+use parking_lot::RwLock;
 
 use indicatif::MultiProgress;
 
@@ -38,7 +39,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             .map(|name| Interface::raw(name.clone()))
             .collect::<Result<Vec<_>, _>>()?,
     );
-    let sources = Arc::new(Mutex::new(HashMap::new()));
+    let sources = Arc::new(RwLock::new(HashMap::new()));
     let running = Arc::new(AtomicBool::new(true));
     let stats = Arc::new(Stats::new());
     let progress = Arc::new(MultiProgress::new());
@@ -74,7 +75,6 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let whitelist_running = running.clone();
         let whitelist_stats = stats.clone();
         let whitelist_interfaces = intefaces.clone();
-        let whitelist_sources = sources.clone();
         let whitelist_config = WhitelistConfiguration::from(cli.clone());
         let whitelist_tx = tx.clone();
 
@@ -115,7 +115,6 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 let result = whitelist_tx.send(whitelist::listen(
                     whitelist_config,
                     whitelist_interfaces,
-                    whitelist_sources,
                     whitelist_running,
                     whitelist_stats,
                 ));

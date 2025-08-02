@@ -1,10 +1,11 @@
 use std::collections::{BTreeMap, HashMap};
 use std::net::{Ipv4Addr, SocketAddrV4};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use nfq::{Queue, Verdict};
+use parking_lot::{RwLock, RwLockUpgradableReadGuard};
 use pnet::packet::ip::IpNextHeaderProtocols;
 use pnet::packet::ipv4::{Ipv4Packet, MutableIpv4Packet};
 use pnet::packet::udp::MutableUdpPacket;
@@ -16,14 +17,14 @@ use crate::utils::CommandGuard;
 
 enum MessageStatus {
     Forwarded(u32),
-    Proxied(u32, SocketAddrV4, SocketAddrV4),
+    Proxied(u32, SocketAddrV4),
     Invalid,
 }
 
 pub fn listen(
     configuration: ReceiverConfiguration,
     _interfaces: Arc<Vec<Interface>>,
-    sources: Arc<Mutex<HashMap<u16, Source>>>,
+    sources: Arc<RwLock<HashMap<u16, Source>>>,
     running: Arc<AtomicBool>,
     stats: Arc<Stats>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -56,7 +57,7 @@ pub fn listen(
         let bytes = msg.get_original_len();
 
         // Pretty-print the message
-        let status = process_message(&mut msg, &configuration);
+        let status = process_message(&mut msg, &sources, &configuration);
         match status {
             MessageStatus::Forwarded(id) if current == 0 || id == current => {
                 if let Some((mut buffered, _)) = map.remove(&id) {
@@ -79,10 +80,7 @@ pub fn listen(
 
                 stats.recv_out_of_order.fetch_add(1, Ordering::Relaxed);
             }
-            MessageStatus::Proxied(id, source, destination) if current == 0 || id == current => {
-                // SAFETY: Proxied messages are only created when SNAT is configured
-                let snat = unsafe { configuration.snat.unwrap_unchecked() };
-
+            MessageStatus::Proxied(id, destination) if current == 0 || id == current => {
                 // We do not forward so drop the messages
                 msg.set_verdict(Verdict::Drop);
                 if let Some((mut buffered, _)) = map.remove(&id) {
@@ -90,21 +88,8 @@ pub fn listen(
                     queue.verdict(buffered)?;
                 }
 
-                if let Ok(socket) = sources
-                    .lock()
-                    .unwrap()
-                    .entry(destination.port())
-                    .or_insert_with(|| {
-                        Source::new(*destination.ip(), destination.port(), snat)
-                            .expect("Failed to bind SNAT port")
-                    })
-                    .attach(SockAddr::from(SocketAddrV4::new(
-                        *source.ip(),
-                        source.port(),
-                    )))
-                    .socket
-                    .read()
-                {
+                if let Some(src) = sources.read().get(&destination.port()) {
+                    let socket = src.socket.read();
                     socket.set_header_included_v4(true)?;
                     socket.send_to(msg.get_payload(), &destination.into())?;
                 }
@@ -113,7 +98,7 @@ pub fn listen(
                 current = id + 1;
                 last = Instant::now();
             }
-            MessageStatus::Proxied(id, _, _) if id > current => {
+            MessageStatus::Proxied(id, _) if id > current => {
                 if let Some((mut buffered, _)) = map.insert(id, (msg, status)) {
                     buffered.set_verdict(Verdict::Drop);
                     queue.verdict(buffered)?;
@@ -122,7 +107,7 @@ pub fn listen(
                 stats.recv_out_of_order.fetch_add(1, Ordering::Relaxed);
             }
             // Already processed, drop it
-            MessageStatus::Forwarded(id) | MessageStatus::Proxied(id, _, _) if id < current => {
+            MessageStatus::Forwarded(id) | MessageStatus::Proxied(id, _) if id < current => {
                 msg.set_verdict(Verdict::Drop);
                 queue.verdict(msg)?;
             }
@@ -154,25 +139,9 @@ pub fn listen(
                     current = id + 1;
                     last = Instant::now();
                 }
-                MessageStatus::Proxied(id, source, destination) => {
-                    // SAFETY: Proxied messages are only created when SNAT is configured
-                    let snat = unsafe { configuration.snat.unwrap_unchecked() };
-
-                    if let Ok(socket) = sources
-                        .lock()
-                        .unwrap()
-                        .entry(destination.port())
-                        .or_insert_with(|| {
-                            Source::new(*destination.ip(), destination.port(), snat)
-                                .expect("Failed to bind SNAT port")
-                        })
-                        .attach(SockAddr::from(SocketAddrV4::new(
-                            *source.ip(),
-                            source.port(),
-                        )))
-                        .socket
-                        .read()
-                    {
+                MessageStatus::Proxied(id, destination) => {
+                    if let Some(src) = sources.read().get(&destination.port()) {
+                        let socket = src.socket.read();
                         socket.set_header_included_v4(true)?;
                         socket.send_to(msg.get_payload(), &destination.into())?;
                     }
@@ -199,7 +168,11 @@ pub fn listen(
     Ok(())
 }
 
-fn process_message(msg: &mut nfq::Message, configuration: &ReceiverConfiguration) -> MessageStatus {
+fn process_message(
+    msg: &mut nfq::Message,
+    sources: &Arc<RwLock<HashMap<u16, Source>>>,
+    configuration: &ReceiverConfiguration,
+) -> MessageStatus {
     let mut payload = msg.get_payload().to_vec();
     if let Some(ip_packet) = Ipv4Packet::new(&payload)
         && ip_packet.get_next_level_protocol() == IpNextHeaderProtocols::Udp
@@ -243,9 +216,20 @@ fn process_message(msg: &mut nfq::Message, configuration: &ReceiverConfiguration
                     udp_packet.set_source(snat.port());
                     msg.set_payload(payload);
 
+                    let sources = sources.upgradable_read();
+                    if sources.contains_key(&destination_port) {
+                        let src = sources.get(&destination_port).unwrap();
+                        src.attach(SockAddr::from(SocketAddrV4::new(source, port)));
+                    } else {
+                        let mut write = RwLockUpgradableReadGuard::upgrade(sources);
+                        let src = Source::new(destination, destination_port, *snat)
+                            .expect("Failed to bind SNAT port");
+                        src.attach(SockAddr::from(SocketAddrV4::new(source, port)));
+                        write.insert(destination_port, src);
+                    }
+
                     return MessageStatus::Proxied(
                         id,
-                        SocketAddrV4::new(source, port),
                         SocketAddrV4::new(destination, destination_port),
                     );
                 }

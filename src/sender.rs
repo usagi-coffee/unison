@@ -1,10 +1,11 @@
 use std::collections::HashMap;
 use std::net::{SocketAddr, SocketAddrV4};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use nfq::{Queue, Verdict};
+use parking_lot::RwLock;
 use pnet::packet::ip::IpNextHeaderProtocols;
 use pnet::packet::ipv4::{Ipv4Packet, MutableIpv4Packet};
 use pnet::packet::udp::MutableUdpPacket;
@@ -16,7 +17,7 @@ use crate::utils::CommandGuard;
 pub fn listen(
     configuration: SenderConfiguration,
     interfaces: Arc<Vec<Interface>>,
-    sources: Arc<Mutex<HashMap<u16, Source>>>,
+    sources: Arc<RwLock<HashMap<u16, Source>>>,
     running: Arc<AtomicBool>,
     stats: Arc<Stats>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -72,25 +73,28 @@ pub fn listen(
                     ip_packet.set_checksum(0);
 
                     for interface in interfaces.iter() {
-                        let socket = interface.socket.write().unwrap();
+                        let socket = interface.socket.write();
                         socket.set_mark(configuration.fwmark)?;
 
                         let mut packet = packet.clone();
 
                         if let Some(_) = configuration.snat {
-                            if let Some(source) = sources.lock().unwrap().get(&src_port) {
-                                for addr in &source.addrs {
+                            if let Some(source) = sources.read().get(&src_port) {
+                                let addrs = &source.addrs.read();
+                                for (addr, last) in addrs.iter() {
                                     let sock_addr = addr.as_socket_ipv4().unwrap();
                                     packet[12..16].copy_from_slice(&source.ip.octets());
                                     packet[20..22].copy_from_slice(&source.port.to_be_bytes());
                                     packet[16..20].copy_from_slice(&sock_addr.ip().octets());
                                     packet[22..24].copy_from_slice(&sock_addr.port().to_be_bytes());
 
-                                    if let Err(error) = socket.send_to(&packet, &addr) {
-                                        eprintln!(
-                                            "sender: {}: failed to send with {}",
-                                            interface.name, error
-                                        );
+                                    if last.load(Ordering::Relaxed).elapsed().as_millis() < 30_000 {
+                                        if let Err(error) = socket.send_to(&packet, &addr) {
+                                            eprintln!(
+                                                "sender: {}: failed to send with {}",
+                                                interface.name, error
+                                            );
+                                        }
                                     }
                                 }
                             }
