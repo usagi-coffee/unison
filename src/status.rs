@@ -9,16 +9,16 @@ use indicatif::{MultiProgress, ProgressBar};
 use std::{thread, time::Duration};
 
 pub fn listen(
+    progress: Arc<MultiProgress>,
     configuration: StatusConfiguration,
     _interfaces: Arc<Vec<Interface>>,
     running: Arc<AtomicBool>,
     stats: Arc<Stats>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let m = MultiProgress::new();
-    let tx = m.add(ProgressBar::new_spinner());
+    let tx = progress.add(ProgressBar::new_spinner());
 
-    let rx = m.add(ProgressBar::new_spinner());
-    let extra = m.add(ProgressBar::new_spinner());
+    let rx = progress.add(ProgressBar::new_spinner());
+    let extra = progress.add(ProgressBar::new_spinner());
     tx.enable_steady_tick(Duration::from_millis(100));
     rx.enable_steady_tick(Duration::from_millis(100));
     extra.enable_steady_tick(Duration::from_millis(100));

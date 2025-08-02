@@ -6,6 +6,8 @@ use std::sync::{Arc, atomic::AtomicBool};
 
 use clap::Parser;
 
+use indicatif::MultiProgress;
+
 use types::{
     Cli, Interface, ReceiverConfiguration, SenderConfiguration, Stats, StatusConfiguration,
     WhitelistConfiguration,
@@ -39,12 +41,17 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let sources = Arc::new(Mutex::new(HashMap::new()));
     let running = Arc::new(AtomicBool::new(true));
     let stats = Arc::new(Stats::new());
+    let progress = Arc::new(MultiProgress::new());
 
-    let running_tx = running.clone();
+    let ctrlc_running = running.clone();
+    let ctrlc_progress = progress.clone();
     ctrlc::set_handler(move || {
-        println!("");
+        if !cli.silent {
+            ctrlc_progress.clear().unwrap();
+        }
+
         println!("Received CTRL+C, stopping...");
-        running_tx.store(false, Ordering::Relaxed);
+        ctrlc_running.store(false, Ordering::Relaxed);
     })?;
 
     std::thread::scope(|scope| {
@@ -118,9 +125,11 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         }
 
         if !cli.silent {
+            let progress = progress.clone();
             scope.spawn(move || {
                 let running = status_running.clone();
                 let result = status_tx.send(status::listen(
+                    progress,
                     status_config,
                     status_interfaces,
                     status_running,
