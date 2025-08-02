@@ -1,23 +1,29 @@
-use std::sync::{
-    Arc,
-    atomic::{AtomicBool, Ordering},
+use std::{
+    collections::HashMap,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 
 use crate::{
-    types::{Interface, Stats, StatusConfiguration},
+    types::{Interface, Source, Stats, StatusConfiguration},
     utils::tc_backlog,
 };
 
 use indicatif::{MultiProgress, ProgressBar};
+use parking_lot::RwLock;
 use std::{thread, time::Duration};
 
 pub fn listen(
     progress: Arc<MultiProgress>,
     configuration: StatusConfiguration,
     interfaces: Arc<Vec<Interface>>,
+    sources: Arc<RwLock<HashMap<u16, Source>>>,
     running: Arc<AtomicBool>,
     stats: Arc<Stats>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let extra = progress.add(ProgressBar::new_spinner());
     let tx = progress.add(ProgressBar::new_spinner());
     for interface in interfaces.iter() {
         interface
@@ -26,7 +32,6 @@ pub fn listen(
     }
 
     let rx = progress.add(ProgressBar::new_spinner());
-    let extra = progress.add(ProgressBar::new_spinner());
     tx.enable_steady_tick(Duration::from_millis(100));
     rx.enable_steady_tick(Duration::from_millis(100));
     extra.enable_steady_tick(Duration::from_millis(100));
@@ -78,6 +83,17 @@ pub fn listen(
                 .join(", ")
         };
 
+        extra.set_message(format!(
+            "🕒 {} | 🌐 {} | {}",
+            uptime,
+            configuration.interfaces.join(", "),
+            if configuration.server {
+                format!("✅ {}", whitelisted)
+            } else {
+                "".into()
+            }
+        ));
+
         tx.set_message(format!(
             "[TX] ----------- {:.2} ({:.2}) Mbps | 🧮 {:.3} MB | 📦 {:>6} |",
             send_throughput,
@@ -121,16 +137,21 @@ pub fn listen(
             stats.recv_dropped.load(Ordering::Relaxed),
         ));
 
-        extra.set_message(format!(
-            "🌐 {} | 🕒 {} | {}",
-            configuration.interfaces.join(", "),
-            uptime,
-            if configuration.server {
-                format!("✅ {}", whitelisted)
-            } else {
-                "".into()
+        for source in sources.read().iter() {
+            for (dst, addr) in source.1.addrs.read().iter() {
+                let source_rx = addr
+                    .progress
+                    .get_or_init(|| Arc::new(progress.add(ProgressBar::new_spinner())));
+
+                let label = format!("{}:{}", dst.as_socket_ipv4().unwrap().port(), source.0);
+                source_rx.set_message(format!(
+                    "|--- {} {} {}",
+                    label,
+                    " ".repeat(usize::max(0, 10 - label.len())),
+                    addr.last.load(Ordering::Relaxed).elapsed().as_millis(),
+                ));
             }
-        ));
+        }
 
         recv_last_bytes = recv_bytes;
         send_last_bytes = send_bytes;

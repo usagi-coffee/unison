@@ -69,6 +69,10 @@ pub struct Cli {
     #[arg(long)]
     pub snat: Option<SocketAddrV4>,
 
+    /// SNAT source time to live in milliseconds
+    #[arg(long, default_value = "60000")]
+    pub ttl: u128,
+
     /// Extra features, might be removed in the future
 
     // Remote address
@@ -90,6 +94,7 @@ pub struct SenderConfiguration {
     pub ports: Option<Vec<u16>>,
 
     pub snat: Option<SocketAddrV4>,
+    pub ttl: u128,
 }
 
 #[derive(o2o)]
@@ -187,7 +192,12 @@ pub struct Source {
     pub ip: Ipv4Addr,
     pub port: u16,
     pub socket: RwLock<socket2::Socket>,
-    pub addrs: RwLock<HashMap<SockAddr, AtomicInstant>>,
+    pub addrs: RwLock<HashMap<SockAddr, SourceAddr>>,
+}
+
+pub struct SourceAddr {
+    pub last: AtomicInstant,
+    pub progress: OnceLock<Arc<ProgressBar>>,
 }
 
 impl Source {
@@ -213,10 +223,16 @@ impl Source {
     pub fn attach(&self, ip: SockAddr) -> &Self {
         let lock = self.addrs.upgradable_read();
         if let Some(addr) = lock.get(&ip) {
-            addr.store(Instant::now(), Ordering::Relaxed);
+            addr.last.store(Instant::now(), Ordering::Relaxed);
         } else {
             let mut write = RwLockUpgradableReadGuard::upgrade(lock);
-            write.insert(ip, AtomicInstant::now());
+            write.insert(
+                ip,
+                SourceAddr {
+                    last: AtomicInstant::new(Instant::now()),
+                    progress: OnceLock::new(),
+                },
+            );
         }
 
         self

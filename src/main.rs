@@ -80,6 +80,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
         let status_running = running.clone();
         let status_interfaces = intefaces.clone();
+        let status_sources = sources.clone();
         let status_config = StatusConfiguration::from(cli.clone());
         let status_tx = tx.clone();
 
@@ -131,6 +132,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                     progress,
                     status_config,
                     status_interfaces,
+                    status_sources,
                     status_running,
                     stats,
                 ));

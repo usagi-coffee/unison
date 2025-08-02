@@ -35,6 +35,26 @@ pub fn listen(
         let mut msg = match queue.recv() {
             Ok(msg) => msg,
             Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                // Evict old addresses from sources
+                for (_, source) in sources.read().iter() {
+                    let mut evict = false;
+                    'addrs: for (_, addr) in source.addrs.read().iter() {
+                        if addr.last.load(Ordering::Relaxed).elapsed().as_millis()
+                            > configuration.ttl
+                        {
+                            evict = true;
+                            break 'addrs;
+                        }
+                    }
+
+                    if evict {
+                        source.addrs.write().retain(|_, addr| {
+                            addr.last.load(Ordering::Relaxed).elapsed().as_millis()
+                                <= configuration.ttl
+                        });
+                    }
+                }
+
                 std::thread::sleep(Duration::from_millis(10));
                 continue;
             }
@@ -81,15 +101,17 @@ pub fn listen(
                         if let Some(_) = configuration.snat {
                             if let Some(source) = sources.read().get(&src_port) {
                                 let addrs = &source.addrs.read();
-                                for (addr, last) in addrs.iter() {
-                                    let sock_addr = addr.as_socket_ipv4().unwrap();
+                                for (dst, addr) in addrs.iter() {
+                                    let dst_addr = dst.as_socket_ipv4().unwrap();
                                     packet[12..16].copy_from_slice(&source.ip.octets());
                                     packet[20..22].copy_from_slice(&source.port.to_be_bytes());
-                                    packet[16..20].copy_from_slice(&sock_addr.ip().octets());
-                                    packet[22..24].copy_from_slice(&sock_addr.port().to_be_bytes());
+                                    packet[16..20].copy_from_slice(&dst_addr.ip().octets());
+                                    packet[22..24].copy_from_slice(&dst_addr.port().to_be_bytes());
 
-                                    if last.load(Ordering::Relaxed).elapsed().as_millis() < 30_000 {
-                                        if let Err(error) = socket.send_to(&packet, &addr) {
+                                    if addr.last.load(Ordering::Relaxed).elapsed().as_millis()
+                                        < configuration.ttl
+                                    {
+                                        if let Err(error) = socket.send_to(&packet, &dst) {
                                             eprintln!(
                                                 "sender: {}: failed to send with {}",
                                                 interface.name, error
