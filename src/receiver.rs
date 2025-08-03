@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, btree_map};
 use std::net::{Ipv4Addr, SocketAddrV4};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -72,17 +72,20 @@ pub fn listen(
                 last = Instant::now();
             }
             MessageStatus::Forwarded(id) if id > current => {
-                // If there already was a buffered message with the same ID, drop it
-                if let Some((mut buffered, _)) = map.insert(id, (msg, status)) {
-                    buffered.set_verdict(Verdict::Drop);
-                    queue.verdict(buffered)?;
-                };
+                match map.entry(id) {
+                    btree_map::Entry::Occupied(_) => {
+                        msg.set_verdict(Verdict::Drop);
+                        queue.verdict(msg)?;
+                    }
+                    btree_map::Entry::Vacant(entry) => {
+                        entry.insert((msg, status));
+                    }
+                }
 
                 stats.recv_out_of_order.fetch_add(1, Ordering::Relaxed);
             }
             MessageStatus::Proxied(id, destination) if current == 0 || id == current => {
                 // We do not forward so drop the messages
-                msg.set_verdict(Verdict::Drop);
                 if let Some((mut buffered, _)) = map.remove(&id) {
                     buffered.set_verdict(Verdict::Drop);
                     queue.verdict(buffered)?;
@@ -94,15 +97,22 @@ pub fn listen(
                     socket.send_to(msg.get_payload(), &destination.into())?;
                 }
 
+                msg.set_verdict(Verdict::Drop);
                 queue.verdict(msg)?;
+
                 current = id + 1;
                 last = Instant::now();
             }
             MessageStatus::Proxied(id, _) if id > current => {
-                if let Some((mut buffered, _)) = map.insert(id, (msg, status)) {
-                    buffered.set_verdict(Verdict::Drop);
-                    queue.verdict(buffered)?;
-                };
+                match map.entry(id) {
+                    btree_map::Entry::Occupied(_) => {
+                        msg.set_verdict(Verdict::Drop);
+                        queue.verdict(msg)?;
+                    }
+                    btree_map::Entry::Vacant(entry) => {
+                        entry.insert((msg, status));
+                    }
+                }
 
                 stats.recv_out_of_order.fetch_add(1, Ordering::Relaxed);
             }
