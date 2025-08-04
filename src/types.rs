@@ -12,6 +12,7 @@ use std::{
 use atomic_time::AtomicInstant;
 use clap::{Parser, arg, command};
 use indicatif::ProgressBar;
+use modular_bitfield::{bitfield, specifiers::*};
 use o2o::o2o;
 use parking_lot::{RwLock, lock_api::RwLockUpgradableReadGuard};
 use socket2::SockAddr;
@@ -65,6 +66,10 @@ pub struct Cli {
     #[arg(long, required = true, num_args = 1..)]
     pub interfaces: Vec<String>,
 
+    /// Number of fragments to send per packet
+    #[arg(long, action, default_value = "1")]
+    pub fragments: u8,
+
     /// SNAT address that should the packets appear to be sent FROM
     #[arg(long)]
     pub snat: Option<SocketAddrV4>,
@@ -92,6 +97,7 @@ pub struct SenderConfiguration {
     pub fwmark: u32,
     pub queue_max_len: u32,
     pub ports: Option<Vec<u16>>,
+    pub fragments: u8,
 
     pub snat: Option<SocketAddrV4>,
     pub ttl: u128,
@@ -236,6 +242,20 @@ impl Source {
         }
 
         self
+    }
+}
+
+#[bitfield]
+#[derive(Clone)]
+pub struct Payload {
+    pub fragments: B3,
+    pub sequence: B26,
+    pub fragment: B3,
+}
+
+impl Payload {
+    pub const fn len() -> usize {
+        4
     }
 }
 

@@ -11,7 +11,7 @@ use pnet::packet::ipv4::{Ipv4Packet, MutableIpv4Packet};
 use pnet::packet::udp::MutableUdpPacket;
 use socket2::SockAddr;
 
-use crate::types::{Interface, SenderConfiguration, Source, Stats};
+use crate::types::{Interface, Payload, SenderConfiguration, Source, Stats};
 use crate::utils::CommandGuard;
 
 pub fn listen(
@@ -64,96 +64,94 @@ pub fn listen(
             }
         };
 
-        let mut packet = msg.get_payload().to_vec();
-        packet.extend_from_slice(&id.to_be_bytes());
+        let fragments = u8::min(configuration.fragments, interfaces.len() as u8);
+        let payload = msg.get_payload_mut();
 
-        if let Some(ip_packet) = Ipv4Packet::new(&packet)
+        const UDP_HEADER: usize = 8;
+
+        if let Some(ip_packet) = Ipv4Packet::new(&payload)
             && ip_packet.get_next_level_protocol() == IpNextHeaderProtocols::Udp
+            && let ip_header_len = 4 * ip_packet.get_header_length() as usize
+            && let (ip_header, udp_packet) = payload.split_at_mut(ip_header_len)
+            && let (udp_header, _) = udp_packet.split_at_mut(UDP_HEADER)
+            && let Some(mut ip_packet) = MutableIpv4Packet::new(ip_header)
+            && let Some(mut udp_packet) = MutableUdpPacket::new(udp_header)
         {
-            let ip_header_len = (ip_packet.get_header_length() * 4) as usize;
-            let src_port = {
-                let udp_header = &packet[ip_header_len..ip_header_len + 4];
-                (udp_header[0] as u16) << 8 | (udp_header[1] as u16)
-            };
+            let src_port = udp_packet.get_source();
+            let dst_port = udp_packet.get_destination();
             let dst = ip_packet.get_destination();
-            let dst_port = {
-                let udp_header = &packet[ip_header_len..ip_header_len + 4];
-                (udp_header[2] as u16) << 8 | (udp_header[3] as u16)
-            };
 
-            let (ip_buf, udp_packet) = packet.split_at_mut(ip_header_len);
+            let udp_len = udp_packet.get_length() + Payload::len() as u16;
+            udp_packet.set_length(udp_len);
+            udp_packet.set_checksum(0);
 
-            if let Some(mut udp_packet) = MutableUdpPacket::new(udp_packet) {
-                udp_packet.set_length(udp_packet.get_length() + 4);
-                udp_packet.set_checksum(0);
+            let ip_len = ip_header_len as u16 + udp_len;
+            ip_packet.set_total_length(ip_len);
+            ip_packet.set_checksum(0);
 
-                if let Some(mut ip_packet) = MutableIpv4Packet::new(ip_buf) {
-                    let new_ip_len = (ip_header_len as u16 + udp_packet.get_length()) as u16;
-                    ip_packet.set_total_length(new_ip_len);
-                    ip_packet.set_checksum(0);
+            stats
+                .send_bytes
+                .fetch_add(ip_packet.get_total_length() as u64, Ordering::Relaxed);
 
-                    for interface in interfaces.iter() {
-                        let socket = interface.socket.write();
-                        socket.set_mark(configuration.fwmark)?;
+            for (fragment, interface) in interfaces.iter().enumerate() {
+                let socket = interface.socket.write();
+                socket.set_mark(configuration.fwmark)?;
 
-                        let mut packet = packet.clone();
+                let mut packet = payload.to_vec();
+                packet.extend_from_slice(
+                    &Payload::new()
+                        .with_sequence(id)
+                        .with_fragments(fragments)
+                        .with_fragment(fragment as u8 % fragments)
+                        .into_bytes(),
+                );
 
-                        if let Some(_) = configuration.snat {
-                            if let Some(source) = sources.read().get(&src_port) {
-                                let addrs = &source.addrs.read();
-                                for (dst, addr) in addrs.iter() {
-                                    let dst_addr = dst.as_socket_ipv4().unwrap();
-                                    packet[12..16].copy_from_slice(&source.ip.octets());
-                                    packet[20..22].copy_from_slice(&source.port.to_be_bytes());
-                                    packet[16..20].copy_from_slice(&dst_addr.ip().octets());
-                                    packet[22..24].copy_from_slice(&dst_addr.port().to_be_bytes());
+                if let Some(_) = configuration.snat {
+                    if let Some(source) = sources.read().get(&src_port) {
+                        let addrs = &source.addrs.read();
+                        for (dst, _) in addrs.iter() {
+                            let dst_addr = dst.as_socket_ipv4().unwrap();
+                            packet[12..16].copy_from_slice(&source.ip.octets());
+                            packet[20..22].copy_from_slice(&source.port.to_be_bytes());
+                            packet[16..20].copy_from_slice(&dst_addr.ip().octets());
+                            packet[22..24].copy_from_slice(&dst_addr.port().to_be_bytes());
 
-                                    if addr.last.load(Ordering::Relaxed).elapsed().as_millis()
-                                        < configuration.ttl
-                                    {
-                                        if let Err(error) = socket.send_to(&packet, &dst) {
-                                            eprintln!(
-                                                "sender: {}: failed to send with {}",
-                                                interface.name, error
-                                            );
-                                        }
-                                    }
-                                }
-                            }
-                        } else {
-                            packet[12..16].copy_from_slice(&interface.ip.octets());
-                            socket.set_header_included_v4(true)?;
-                            let addr =
-                                SockAddr::from(SocketAddr::V4(SocketAddrV4::new(dst, dst_port)));
-                            if let Err(error) = socket.send_to(&packet, &addr.into()) {
+                            if let Err(error) = socket.send_to(&packet, &dst) {
                                 eprintln!(
                                     "sender: {}: failed to send with {}",
                                     interface.name, error
                                 );
                             }
                         }
-
-                        socket.set_mark(0)?;
-
-                        interface.send_packets.fetch_add(1, Ordering::Relaxed);
-                        interface
-                            .send_bytes
-                            .fetch_add(packet.len() as u64, Ordering::Relaxed);
                     }
+                } else {
+                    packet[12..16].copy_from_slice(&interface.ip.octets());
 
-                    id += 1;
+                    socket.set_header_included_v4(true)?;
+                    if let Err(error) = socket.send_to(
+                        &packet,
+                        &SockAddr::from(SocketAddr::V4(SocketAddrV4::new(dst, dst_port))).into(),
+                    ) {
+                        eprintln!("sender: {}: failed to send with {}", interface.name, error);
+                    }
                 }
+
+                socket.set_mark(0)?;
+
+                interface.send_packets.fetch_add(1, Ordering::Relaxed);
+                interface
+                    .send_bytes
+                    .fetch_add(packet.len() as u64, Ordering::Relaxed);
             }
+
+            id += 1;
+
+            stats.send_total.fetch_add(1, Ordering::Relaxed);
+            stats.send_current.store(id as u64, Ordering::Relaxed);
         }
 
         msg.set_verdict(Verdict::Drop);
         queue.verdict(msg)?;
-
-        stats.send_total.fetch_add(1, Ordering::Relaxed);
-        stats
-            .send_bytes
-            .fetch_add(packet.len() as u64, Ordering::Relaxed);
-        stats.send_current.store(id as u64, Ordering::Relaxed);
     }
 
     Ok(())

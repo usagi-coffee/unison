@@ -9,16 +9,19 @@ use parking_lot::{RwLock, RwLockUpgradableReadGuard};
 use pnet::packet::ip::IpNextHeaderProtocols;
 use pnet::packet::ipv4::{Ipv4Packet, MutableIpv4Packet};
 use pnet::packet::udp::MutableUdpPacket;
-use pnet::packet::{MutablePacket, Packet};
 use socket2::SockAddr;
 
-use crate::types::{Interface, ReceiverConfiguration, Source, Stats};
+use crate::types::{Interface, Payload, ReceiverConfiguration, Source, Stats};
 use crate::utils::CommandGuard;
 
-enum MessageStatus {
-    Forwarded(u32),
-    Proxied(u32, SocketAddrV4),
-    Invalid,
+pub struct ReassembledPacket {
+    pub id: u32,
+    pub payload: Vec<u8>,
+    pub ip_header_length: usize,
+    pub fragments: Box<[Option<Box<[u8]>>]>,
+    pub destination: SocketAddrV4,
+    pub completed: bool,
+    pub msg: Option<nfq::Message>,
 }
 
 pub fn listen(
@@ -35,7 +38,7 @@ pub fn listen(
     queue.set_queue_max_len(configuration.recv_queue, configuration.recv_queue_max_len)?;
     queue.set_nonblocking(true);
 
-    let mut map: BTreeMap<u32, (nfq::Message, MessageStatus)> = BTreeMap::new();
+    let mut packets: BTreeMap<u32, ReassembledPacket> = BTreeMap::new();
     let mut current: u32 = 0;
 
     let mut last = Instant::now();
@@ -55,84 +58,126 @@ pub fn listen(
         };
 
         let bytes = msg.get_original_len();
+        let payload = msg.get_payload_mut();
 
-        // Pretty-print the message
-        let status = process_message(&mut msg, &sources, &configuration);
-        match status {
-            MessageStatus::Forwarded(id) if current == 0 || id == current => {
-                if let Some((mut buffered, _)) = map.remove(&id) {
-                    buffered.set_verdict(Verdict::Drop);
-                    queue.verdict(buffered)?;
+        // Invalid packets are dropped
+        if payload.len() < 28 {
+            msg.set_verdict(Verdict::Drop);
+            queue.verdict(msg)?;
+            stats.recv_dropped.fetch_add(1, Ordering::Relaxed);
+            continue;
+        }
+
+        const UDP_HEADER: usize = 8;
+
+        if let Some(ip_packet) = Ipv4Packet::new(&payload)
+            && ip_packet.get_next_level_protocol() == IpNextHeaderProtocols::Udp
+            && let ip_header_len = 4 * ip_packet.get_header_length() as usize
+            && let (ip_header, udp_packet) = payload.split_at_mut(ip_header_len)
+            && let (udp_header, udp_full_payload) = udp_packet.split_at_mut(UDP_HEADER)
+            && let udp_payload = &udp_full_payload[..udp_full_payload.len() - Payload::len()]
+            && let Ok(mut extra_payload) = udp_full_payload[udp_payload.len()..].try_into()
+            && let Some(mut ip_packet) = MutableIpv4Packet::new(ip_header)
+            && let Some(mut udp_packet) = MutableUdpPacket::new(udp_header)
+            && let extra = Payload::from_bytes(extra_payload)
+            && extra.sequence() >= current
+        {
+            let source = ip_packet.get_source();
+            let port = udp_packet.get_source();
+            let destination_ip = ip_packet.get_destination();
+            let destination_port = udp_packet.get_destination();
+
+            if let Some(snat) = &configuration.snat {
+                ip_packet.set_source(*snat.ip());
+                udp_packet.set_source(snat.port());
+
+                let sources = sources.upgradable_read();
+                if sources.contains_key(&destination_port) {
+                    let src = sources.get(&destination_port).unwrap();
+                    src.attach(SockAddr::from(SocketAddrV4::new(source, port)));
+                } else {
+                    let mut write = RwLockUpgradableReadGuard::upgrade(sources);
+                    let src = Source::new(destination_ip, destination_port, *snat)
+                        .expect("Failed to bind SNAT port");
+                    src.attach(SockAddr::from(SocketAddrV4::new(source, port)));
+                    write.insert(destination_port, src);
                 }
-
-                // Forward the message
-                msg.set_verdict(Verdict::Accept);
-                queue.verdict(msg)?;
-                current = id + 1;
-                last = Instant::now();
             }
-            MessageStatus::Forwarded(id) if id > current => {
-                match map.entry(id) {
-                    btree_map::Entry::Occupied(_) => {
-                        msg.set_verdict(Verdict::Drop);
-                        queue.verdict(msg)?;
+
+            // Zero out the extra payload
+            for byte in &mut extra_payload {
+                *byte = 0;
+            }
+
+            match packets.entry(extra.sequence()) {
+                // Add a new packet
+                btree_map::Entry::Vacant(entry) => {
+                    let mut fragments = vec![None; extra.fragments() as usize].into_boxed_slice();
+
+                    let mut header_or_payload: Vec<u8>;
+
+                    // Fragmented
+                    if fragments.len() > 1 {
+                        let approx_udp_length = UDP_HEADER
+                            + udp_payload.len()
+                            + (udp_payload.len() * extra.fragments() as usize);
+
+                        header_or_payload = Vec::with_capacity(ip_header.len() + approx_udp_length);
+                        fragments[extra.fragment() as usize] =
+                            Some(udp_payload.to_vec().into_boxed_slice());
+                        header_or_payload.extend_from_slice(ip_header);
+                        header_or_payload.extend_from_slice(udp_header);
+                    } else {
+                        let udp_length = UDP_HEADER + udp_payload.len();
+                        header_or_payload = Vec::with_capacity(ip_header_len + udp_length);
+                        header_or_payload.extend_from_slice(&payload[..ip_header_len + udp_length]);
                     }
-                    btree_map::Entry::Vacant(entry) => {
-                        entry.insert((msg, status));
+
+                    entry.insert(ReassembledPacket {
+                        id: extra.sequence(),
+                        ip_header_length: ip_header_len,
+                        payload: header_or_payload,
+                        destination: SocketAddrV4::new(destination_ip, destination_port),
+                        completed: fragments.len() < 2,
+                        fragments,
+                        msg: if configuration.snat.is_none() {
+                            Some(msg)
+                        } else {
+                            msg.set_verdict(Verdict::Drop);
+                            queue.verdict(msg)?;
+                            None
+                        },
+                    });
+                }
+                // Add fragments
+                btree_map::Entry::Occupied(mut entry) if extra.fragments() > 1 => {
+                    let packet = entry.get_mut();
+                    if packet.fragments[extra.fragment() as usize].is_none() {
+                        packet.fragments[extra.fragment() as usize] =
+                            Some(udp_payload.to_vec().into_boxed_slice());
+                        packet.completed = packet.fragments.iter().all(|f| f.is_some());
                     }
+
+                    msg.set_verdict(Verdict::Drop);
+                    queue.verdict(msg)?;
                 }
-
-                stats.recv_out_of_order.fetch_add(1, Ordering::Relaxed);
-            }
-            MessageStatus::Proxied(id, destination) if current == 0 || id == current => {
-                // We do not forward so drop the messages
-                if let Some((mut buffered, _)) = map.remove(&id) {
-                    buffered.set_verdict(Verdict::Drop);
-                    queue.verdict(buffered)?;
+                // Duplicate
+                btree_map::Entry::Occupied(_) => {
+                    msg.set_verdict(Verdict::Drop);
+                    queue.verdict(msg)?;
                 }
-
-                if let Some(src) = sources.read().get(&destination.port()) {
-                    let socket = src.socket.read();
-                    socket.set_header_included_v4(true)?;
-                    socket.send_to(msg.get_payload(), &destination.into())?;
-                }
-
-                msg.set_verdict(Verdict::Drop);
-                queue.verdict(msg)?;
-
-                current = id + 1;
-                last = Instant::now();
             }
-            MessageStatus::Proxied(id, _) if id > current => {
-                match map.entry(id) {
-                    btree_map::Entry::Occupied(_) => {
-                        msg.set_verdict(Verdict::Drop);
-                        queue.verdict(msg)?;
-                    }
-                    btree_map::Entry::Vacant(entry) => {
-                        entry.insert((msg, status));
-                    }
-                }
-
-                stats.recv_out_of_order.fetch_add(1, Ordering::Relaxed);
-            }
-            // Already processed, drop it
-            MessageStatus::Forwarded(id) | MessageStatus::Proxied(id, _) if id < current => {
-                msg.set_verdict(Verdict::Drop);
-                queue.verdict(msg)?;
-            }
-            // Invalid, drop it
-            MessageStatus::Invalid => {
-                msg.set_verdict(Verdict::Drop);
-                queue.verdict(msg)?;
-                stats.recv_dropped.fetch_add(1, Ordering::Relaxed);
-            }
-            _ => unreachable!("Unexpected message status"),
+        } else {
+            // Not compatible UDP packet
+            msg.set_verdict(Verdict::Drop);
+            queue.verdict(msg)?;
+            stats.recv_dropped.fetch_add(1, Ordering::Relaxed);
+            continue;
         }
 
         // Drop messages that have been buffered for too long
         if Instant::now().duration_since(last).as_millis() > configuration.timeout {
-            if let Some((first, _)) = map.first_key_value() {
+            if let Some((first, _)) = packets.first_key_value() {
                 stats
                     .recv_dropped
                     .fetch_add((*first - current) as u64, Ordering::Relaxed);
@@ -140,34 +185,54 @@ pub fn listen(
             }
         }
 
-        // Drain the queue of buffered messages if possible
-        while let Some((_, (mut msg, status))) = map.remove_entry(&current) {
-            match status {
-                MessageStatus::Forwarded(id) => {
-                    msg.set_verdict(Verdict::Accept);
-                    queue.verdict(msg)?;
-                    current = id + 1;
-                    last = Instant::now();
+        while let Some(packet) = match packets.entry(current) {
+            btree_map::Entry::Occupied(entry) if !entry.get().completed => None,
+            btree_map::Entry::Occupied(mut entry) => {
+                let packet = entry.get_mut();
+                let payload = &mut packet.payload;
+
+                let mut udp_length = payload.len() - packet.ip_header_length;
+
+                // Reassemble the packet payload
+                if packet.fragments.len() > 1 {
+                    for fragment in packet.fragments.iter_mut() {
+                        if let Some(data) = fragment.take() {
+                            payload.extend_from_slice(&data);
+                            udp_length += data.len();
+                        }
+                    }
                 }
-                MessageStatus::Proxied(id, destination) => {
-                    if let Some(src) = sources.read().get(&destination.port()) {
+
+                let (ip_buf, udp_buf) = payload.split_at_mut(packet.ip_header_length);
+                let mut ip_packet = MutableIpv4Packet::new(ip_buf).unwrap();
+                let mut udp_packet = MutableUdpPacket::new(udp_buf).unwrap();
+
+                udp_packet.set_length(udp_length as u16);
+                ip_packet.set_total_length((packet.ip_header_length + udp_length) as u16);
+                udp_packet.set_checksum(0);
+                ip_packet.set_checksum(0);
+
+                // Send from the SNAT source
+                if let Some(_) = &configuration.snat {
+                    if let Some(src) = sources.read().get(&packet.destination.port()) {
                         let socket = src.socket.read();
                         socket.set_header_included_v4(true)?;
-                        socket.send_to(msg.get_payload(), &destination.into())?;
+                        socket.send_to(&payload, &packet.destination.into())?;
                     }
+                }
+                // Forward
+                else if let Some(mut msg) = packet.msg.take() {
+                    msg.set_payload(&**payload);
+                    msg.set_verdict(Verdict::Accept);
+                    queue.verdict(msg)?;
+                }
 
-                    // We do not forward so drop the message
-                    msg.set_verdict(Verdict::Drop);
-                    queue.verdict(msg)?;
-                    current = id + 1;
-                    last = Instant::now();
-                }
-                MessageStatus::Invalid => {
-                    msg.set_verdict(Verdict::Drop);
-                    queue.verdict(msg)?;
-                    stats.recv_dropped.fetch_add(1, Ordering::Relaxed);
-                }
+                Some(entry.remove())
             }
+            btree_map::Entry::Vacant(_) => None,
+        } {
+            current = packet.id;
+            last = Instant::now();
         }
 
         stats.recv_total.fetch_add(1, Ordering::Relaxed);
@@ -176,81 +241,6 @@ pub fn listen(
     }
 
     Ok(())
-}
-
-fn process_message(
-    msg: &mut nfq::Message,
-    sources: &Arc<RwLock<HashMap<u16, Source>>>,
-    configuration: &ReceiverConfiguration,
-) -> MessageStatus {
-    let mut payload = msg.get_payload().to_vec();
-    if let Some(ip_packet) = Ipv4Packet::new(&payload)
-        && ip_packet.get_next_level_protocol() == IpNextHeaderProtocols::Udp
-    {
-        let ip_header_len = (ip_packet.get_header_length() * 4) as usize;
-        let (ip_buf, udp_packet_buf) = payload.split_at_mut(ip_header_len);
-
-        const UDP_HEADER: u16 = 8;
-        if let Some(mut udp_packet) = MutableUdpPacket::new(udp_packet_buf) {
-            // Extract the ID
-            let id = u32::from_be_bytes(
-                udp_packet.payload()[udp_packet.payload().len() - 4..]
-                    .try_into()
-                    .unwrap(),
-            );
-
-            let full_packet = udp_packet.packet_mut();
-            let (_, rest) = full_packet.split_at_mut(UDP_HEADER as usize);
-
-            // Zero out the last 4 bytes of the UDP payload
-            let len = rest.len() - 4;
-            for b in &mut rest[len..] {
-                *b = 0;
-            }
-
-            udp_packet.set_length(UDP_HEADER + len as u16);
-            udp_packet.set_checksum(0);
-
-            if let Some(mut ip_packet) = MutableIpv4Packet::new(ip_buf) {
-                let new_ip_len = ip_header_len as u16 + UDP_HEADER + len as u16;
-                ip_packet.set_total_length(new_ip_len);
-                ip_packet.set_checksum(0);
-
-                if let Some(snat) = &configuration.snat {
-                    let source = ip_packet.get_source();
-                    let port = udp_packet.get_source();
-                    let destination = ip_packet.get_destination();
-                    let destination_port = udp_packet.get_destination();
-
-                    ip_packet.set_source(*snat.ip());
-                    udp_packet.set_source(snat.port());
-                    msg.set_payload(payload);
-
-                    let sources = sources.upgradable_read();
-                    if sources.contains_key(&destination_port) {
-                        let src = sources.get(&destination_port).unwrap();
-                        src.attach(SockAddr::from(SocketAddrV4::new(source, port)));
-                    } else {
-                        let mut write = RwLockUpgradableReadGuard::upgrade(sources);
-                        let src = Source::new(destination, destination_port, *snat)
-                            .expect("Failed to bind SNAT port");
-                        src.attach(SockAddr::from(SocketAddrV4::new(source, port)));
-                        write.insert(destination_port, src);
-                    }
-
-                    return MessageStatus::Proxied(
-                        id,
-                        SocketAddrV4::new(destination, destination_port),
-                    );
-                }
-
-                msg.set_payload(payload);
-                return MessageStatus::Forwarded(id);
-            }
-        }
-    }
-
-    MessageStatus::Invalid
 }
 
 fn iptables(configuration: &ReceiverConfiguration) -> Vec<CommandGuard<'_>> {
