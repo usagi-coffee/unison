@@ -231,7 +231,7 @@ pub fn listen(
             }
             btree_map::Entry::Vacant(_) => None,
         } {
-            current = packet.id;
+            current = packet.id + 1;
             last = Instant::now();
         }
 
