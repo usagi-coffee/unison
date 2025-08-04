@@ -64,29 +64,33 @@ pub fn listen(
             }
         };
 
-        let fragments = u8::min(configuration.fragments, interfaces.len() as u8);
-        let payload = msg.get_payload_mut();
-
         const UDP_HEADER: usize = 8;
 
+        let payload = msg.get_payload_mut();
         if let Some(ip_packet) = Ipv4Packet::new(&payload)
             && ip_packet.get_next_level_protocol() == IpNextHeaderProtocols::Udp
             && let ip_header_len = 4 * ip_packet.get_header_length() as usize
             && let (ip_header, udp_packet) = payload.split_at_mut(ip_header_len)
-            && let (udp_header, _) = udp_packet.split_at_mut(UDP_HEADER)
+            && let (udp_header, udp_payload) = udp_packet.split_at_mut(UDP_HEADER)
             && let Some(mut ip_packet) = MutableIpv4Packet::new(ip_header)
             && let Some(mut udp_packet) = MutableUdpPacket::new(udp_header)
         {
+            let fragments = if udp_payload.len() >= configuration.fragment_threshold as usize
+                && udp_payload.len() >= configuration.fragments as usize
+            {
+                u8::min(configuration.fragments, interfaces.len() as u8)
+            } else {
+                1
+            };
+
+            let fragment_len = udp_payload.len() / fragments as usize;
+            let fragment_remainder = udp_payload.len() % fragments as usize;
+
             let src_port = udp_packet.get_source();
             let dst_port = udp_packet.get_destination();
             let dst = ip_packet.get_destination();
 
-            let udp_len = udp_packet.get_length() + Payload::len() as u16;
-            udp_packet.set_length(udp_len);
             udp_packet.set_checksum(0);
-
-            let ip_len = ip_header_len as u16 + udp_len;
-            ip_packet.set_total_length(ip_len);
             ip_packet.set_checksum(0);
 
             stats
@@ -94,10 +98,36 @@ pub fn listen(
                 .fetch_add(ip_packet.get_total_length() as u64, Ordering::Relaxed);
 
             for (fragment, interface) in interfaces.iter().enumerate() {
-                let socket = interface.socket.write();
-                socket.set_mark(configuration.fwmark)?;
+                let last = fragment == interfaces.len() - 1;
+                let udp_len = UDP_HEADER
+                    + fragment_len
+                    + if last { fragment_remainder } else { 0 }
+                    + Payload::len();
 
-                let mut packet = payload.to_vec();
+                let mut packet = Vec::with_capacity(ip_header_len + udp_len);
+                // IP Header
+                packet.extend_from_slice(ip_header);
+                packet[2..4].copy_from_slice(&((ip_header_len + udp_len) as u16).to_be_bytes());
+
+                // UDP Header
+                packet.extend_from_slice(udp_header);
+                packet[ip_header_len + 4..ip_header_len + 6]
+                    .copy_from_slice(&(udp_len as u16).to_be_bytes());
+
+                // UDP Payload
+                if fragments > 1 {
+                    if last {
+                        packet.extend_from_slice(&udp_payload[fragment * fragment_len..]);
+                    } else {
+                        packet.extend_from_slice(
+                            &udp_payload[fragment * fragment_len..(1 + fragment) * fragment_len],
+                        );
+                    }
+                } else {
+                    packet.extend_from_slice(&udp_payload);
+                }
+
+                // Extra
                 packet.extend_from_slice(
                     &Payload::new()
                         .with_sequence(id)
@@ -105,6 +135,10 @@ pub fn listen(
                         .with_fragment(fragment as u8 % fragments)
                         .into_bytes(),
                 );
+
+                let socket = interface.socket.write();
+                socket.set_mark(configuration.fwmark)?;
+                socket.set_header_included_v4(true)?;
 
                 if let Some(_) = configuration.snat {
                     if let Some(source) = sources.read().get(&src_port) {
@@ -136,6 +170,7 @@ pub fn listen(
                     }
                 }
 
+                // Reset mark on going out
                 socket.set_mark(0)?;
 
                 interface.send_packets.fetch_add(1, Ordering::Relaxed);

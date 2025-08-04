@@ -70,6 +70,10 @@ pub struct Cli {
     #[arg(long, action, default_value = "1")]
     pub fragments: u8,
 
+    /// Minimum size of packets to fragment
+    #[arg(long, default_value = "100")]
+    pub fragment_threshold: u8,
+
     /// SNAT address that should the packets appear to be sent FROM
     #[arg(long)]
     pub snat: Option<SocketAddrV4>,
@@ -98,6 +102,7 @@ pub struct SenderConfiguration {
     pub queue_max_len: u32,
     pub ports: Option<Vec<u16>>,
     pub fragments: u8,
+    pub fragment_threshold: u8,
 
     pub snat: Option<SocketAddrV4>,
     pub ttl: u128,

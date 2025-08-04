@@ -14,6 +14,7 @@ use socket2::SockAddr;
 use crate::types::{Interface, Payload, ReceiverConfiguration, Source, Stats};
 use crate::utils::CommandGuard;
 
+#[derive(Debug)]
 pub struct ReassembledPacket {
     pub id: u32,
     pub payload: Vec<u8>,
@@ -76,7 +77,7 @@ pub fn listen(
             && let (ip_header, udp_packet) = payload.split_at_mut(ip_header_len)
             && let (udp_header, udp_full_payload) = udp_packet.split_at_mut(UDP_HEADER)
             && let udp_payload = &udp_full_payload[..udp_full_payload.len() - Payload::len()]
-            && let Ok(mut extra_payload) = udp_full_payload[udp_payload.len()..].try_into()
+            && let Ok(extra_payload) = udp_full_payload[udp_payload.len()..].try_into()
             && let Some(mut ip_packet) = MutableIpv4Packet::new(ip_header)
             && let Some(mut udp_packet) = MutableUdpPacket::new(udp_header)
             && let extra = Payload::from_bytes(extra_payload)
@@ -104,13 +105,7 @@ pub fn listen(
                 }
             }
 
-            // Zero out the extra payload
-            for byte in &mut extra_payload {
-                *byte = 0;
-            }
-
             match packets.entry(extra.sequence()) {
-                // Add a new packet
                 btree_map::Entry::Vacant(entry) => {
                     let mut fragments = vec![None; extra.fragments() as usize].into_boxed_slice();
 
@@ -118,9 +113,8 @@ pub fn listen(
 
                     // Fragmented
                     if fragments.len() > 1 {
-                        let approx_udp_length = UDP_HEADER
-                            + udp_payload.len()
-                            + (udp_payload.len() * extra.fragments() as usize);
+                        let approx_udp_length =
+                            UDP_HEADER + (udp_payload.len() * extra.fragments() as usize + 1);
 
                         header_or_payload = Vec::with_capacity(ip_header.len() + approx_udp_length);
                         fragments[extra.fragment() as usize] =
