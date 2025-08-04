@@ -75,9 +75,7 @@ pub fn listen(
             && let Some(mut ip_packet) = MutableIpv4Packet::new(ip_header)
             && let Some(mut udp_packet) = MutableUdpPacket::new(udp_header)
         {
-            let fragments = if udp_payload.len() >= configuration.fragment_threshold as usize
-                && udp_payload.len() >= configuration.fragments as usize
-            {
+            let fragments = if udp_payload.len() >= configuration.fragment_threshold as usize {
                 u8::min(configuration.fragments, interfaces.len() as u8)
             } else {
                 1

@@ -44,6 +44,8 @@ pub fn listen(
 
     let mut last = Instant::now();
 
+    const UDP_HEADER: usize = 8;
+
     stats.recv_ready.store(true, Ordering::Relaxed);
     while running.load(Ordering::Relaxed) {
         let mut msg = match queue.recv() {
@@ -61,17 +63,8 @@ pub fn listen(
         let bytes = msg.get_original_len();
         let payload = msg.get_payload_mut();
 
-        // Invalid packets are dropped
-        if payload.len() < 28 {
-            msg.set_verdict(Verdict::Drop);
-            queue.verdict(msg)?;
-            stats.recv_dropped.fetch_add(1, Ordering::Relaxed);
-            continue;
-        }
-
-        const UDP_HEADER: usize = 8;
-
-        if let Some(ip_packet) = Ipv4Packet::new(&payload)
+        if payload.len() > 27
+            && let Some(ip_packet) = Ipv4Packet::new(&payload)
             && ip_packet.get_next_level_protocol() == IpNextHeaderProtocols::Udp
             && let ip_header_len = 4 * ip_packet.get_header_length() as usize
             && let (ip_header, udp_packet) = payload.split_at_mut(ip_header_len)
@@ -166,7 +159,6 @@ pub fn listen(
             msg.set_verdict(Verdict::Drop);
             queue.verdict(msg)?;
             stats.recv_dropped.fetch_add(1, Ordering::Relaxed);
-            continue;
         }
 
         // Drop messages that have been buffered for too long
