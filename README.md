@@ -8,6 +8,7 @@ Flexible UDP transport layer designed for bi-directional multi-path delivery.
 
 - 📋 Packet duplication across multiple interfaces for redundancy
 - 🔍 Packet deduplication, with out-of-order handling
+- ✂️ Packet fragmentation across multiple interfaces for parallel transmission and reassembly
 - 🔁 Seamless bidirectional handling of UDP traffic
 - 🔐 HMAC-based authentication for automatic iptables whitelisting
 - 🎭 Source IP masquerading and restoration for single-source IP–dependent protocols like SRT
