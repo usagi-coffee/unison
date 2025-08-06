@@ -158,12 +158,11 @@ pub fn listen(
             // Not compatible UDP packet
             msg.set_verdict(Verdict::Drop);
             queue.verdict(msg)?;
-            stats.recv_dropped.fetch_add(1, Ordering::Relaxed);
         }
 
         // Drop messages that have been buffered for too long
         if Instant::now().duration_since(last).as_millis() > configuration.timeout {
-            if let Some((first, _)) = packets.first_key_value() {
+            if let Some((&first, _)) = packets.iter().find(|(_, packet)| packet.completed) {
                 stats
                     .recv_dropped
                     .fetch_add((*first - current) as u64, Ordering::Relaxed);
