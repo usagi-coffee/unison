@@ -62,6 +62,9 @@ pub struct Cli {
     #[arg(long, default_value = "230")]
     pub table: u32,
 
+    #[arg(long)]
+    pub destination: Option<SocketAddrV4>,
+
     /// Sender interfaces (e.g., wg0 wg1)
     #[arg(long, required = true, num_args = 1..)]
     pub interfaces: Vec<String>,
@@ -103,6 +106,7 @@ pub struct SenderConfiguration {
     pub ports: Option<Vec<u16>>,
     pub fragments: u8,
     pub fragment_threshold: u8,
+    pub destination: Option<SocketAddrV4>,
 
     pub snat: Option<SocketAddrV4>,
     pub ttl: u128,

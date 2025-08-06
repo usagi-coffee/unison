@@ -86,7 +86,16 @@ pub fn listen(
 
             let src_port = udp_packet.get_source();
             let dst_port = udp_packet.get_destination();
-            let dst = ip_packet.get_destination();
+            let dst = {
+                if let Some(destination) = configuration.destination {
+                    let destination = destination.ip().clone();
+                    ip_packet.set_destination(destination);
+                    destination
+                }
+                else {
+                    ip_packet.get_destination()
+                }
+            };
 
             udp_packet.set_checksum(0);
             ip_packet.set_checksum(0);
