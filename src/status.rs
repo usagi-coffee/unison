@@ -103,6 +103,7 @@ pub fn listen(
         ));
 
         for interface in interfaces.iter() {
+            let send_last_bytes = interface.send_last_bytes.load(Ordering::Relaxed);
             let send_bytes = interface.send_bytes.load(Ordering::Relaxed);
             let send_total = (send_bytes * 8) / 1_000_000;
             let send_throughput = ((send_bytes - send_last_bytes) * 8) as f64 / 1_000_000.0;
