@@ -165,8 +165,8 @@ pub fn listen(
             if let Some((&first, _)) = packets.iter().find(|(_, packet)| packet.completed) {
                 stats
                     .recv_dropped
-                    .fetch_add((*first - current) as u64, Ordering::Relaxed);
-                current = *first;
+                    .fetch_add((first - current) as u64, Ordering::Relaxed);
+                current = first;
             }
         }
 
