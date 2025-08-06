@@ -95,7 +95,7 @@ pub fn listen(
         ));
 
         tx.set_message(format!(
-            "[TX] ----------- {:.2} ({:.2}) Mbps | 🧮 {:.3} MB | 📦 {:>6} |",
+            "[TX] ---------------- {:.2} ({:.2}) Mbps | 🧮 {:.3} MB | 📦 {:>6} |",
             send_throughput,
             send_peak_throughput,
             send_total,
@@ -116,7 +116,7 @@ pub fn listen(
             interface_tx.set_message(format!(
                 "|--- {} {} {:.2} ({:.2}) Mbps | 🧮 {:.3} MB | ⏳ {:>6} |",
                 interface.name,
-                " ".repeat(usize::max(0, 10 - interface.name.len())),
+                " ".repeat(usize::max(0, 15 - interface.name.len())),
                 send_throughput,
                 send_peak_throughput,
                 send_total,
@@ -129,7 +129,7 @@ pub fn listen(
         }
 
         rx.set_message(format!(
-            "[RX] ----------- {:.2} ({:.2}) Mbps | 🧮 {:.3} MB | 📦 {:>6} | ❌ {:>4}",
+            "[RX] ---------------- {:.2} ({:.2}) Mbps | 🧮 {:.3} MB | 📦 {:>6} | ❌ {:>4}",
             recv_throughput,
             recv_peak_throughput,
             recv_total,
