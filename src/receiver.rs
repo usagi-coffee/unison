@@ -107,7 +107,7 @@ pub fn listen(
                     // Fragmented
                     if fragments.len() > 1 {
                         let approx_udp_length =
-                            UDP_HEADER + (udp_payload.len() * extra.fragments() as usize + 1);
+                            UDP_HEADER + (udp_payload.len() * extra.fragments() as usize + 16);
 
                         header_or_payload = Vec::with_capacity(ip_header.len() + approx_udp_length);
                         fragments[extra.fragment() as usize] =
