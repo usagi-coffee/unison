@@ -104,10 +104,14 @@ pub fn listen(
                 .fetch_add(ip_packet.get_total_length() as u64, Ordering::Relaxed);
 
             for (fragment, interface) in interfaces.iter().enumerate() {
-                let last = fragment == interfaces.len() - 1;
+                let last = fragment == fragments as usize - 1;
                 let udp_len = UDP_HEADER
                     + fragment_len
-                    + if last { fragment_remainder } else { 0 }
+                    + if fragments > 1 && last {
+                        fragment_remainder
+                    } else {
+                        0
+                    }
                     + Payload::len();
 
                 let mut packet = Vec::with_capacity(ip_header_len + udp_len);
@@ -119,6 +123,8 @@ pub fn listen(
                 packet.extend_from_slice(udp_header);
                 packet[ip_header_len + 4..ip_header_len + 6]
                     .copy_from_slice(&(udp_len as u16).to_be_bytes());
+
+                let fragment = fragment % fragments as usize;
 
                 // UDP Payload
                 if fragments > 1 {
