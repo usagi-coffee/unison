@@ -42,6 +42,7 @@ pub fn listen(
     let mut current: u32 = 0;
 
     let mut last = Instant::now();
+    let mut completed: u32 = 0;
 
     const UDP_HEADER: usize = 8;
 
@@ -117,6 +118,7 @@ pub fn listen(
                         let udp_length = UDP_HEADER + udp_payload.len();
                         header_or_payload = Vec::with_capacity(ip_header_len + udp_length);
                         header_or_payload.extend_from_slice(&payload[..ip_header_len + udp_length]);
+                        completed = u32::max(completed, extra.sequence());
                     }
 
                     entry.insert(ReassembledPacket {
@@ -141,6 +143,9 @@ pub fn listen(
                         packet.fragments[extra.fragment() as usize] =
                             Some(udp_payload.to_vec().into_boxed_slice());
                         packet.completed = packet.fragments.iter().all(|f| f.is_some());
+                        if packet.completed {
+                            completed = u32::max(completed, extra.sequence());
+                        }
                     }
 
                     msg.set_verdict(Verdict::Drop);
@@ -159,10 +164,13 @@ pub fn listen(
         }
 
         // Drop packets until the completed one
-        if Instant::now().duration_since(last).as_millis() > configuration.timeout {
-            while let Some(entry) = packets.first_entry() {
+        if completed > 0 && Instant::now().duration_since(last).as_millis() > configuration.timeout
+        {
+            while let Some(entry) = packets.first_entry()
+                && let id = *entry.key()
+                && id <= completed
+            {
                 if entry.get().completed {
-                    let id = *entry.key();
                     stats
                         .recv_dropped
                         .fetch_add((id - current) as u64, Ordering::Relaxed);
@@ -175,6 +183,8 @@ pub fn listen(
                     queue.verdict(msg)?;
                 }
             }
+
+            completed = 0;
         }
 
         while let Some(_) = match packets.entry(current) {
