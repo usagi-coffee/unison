@@ -162,11 +162,7 @@ pub fn listen(
         if Instant::now().duration_since(last).as_millis() > configuration.timeout {
             while let Some(entry) = packets.first_entry() {
                 if entry.get().completed {
-                    let id = *entry.key();
-                    stats
-                        .recv_dropped
-                        .fetch_add((id - current) as u64, Ordering::Relaxed);
-                    current = id;
+                    current = *entry.key();
                     break;
                 }
 
@@ -174,6 +170,8 @@ pub fn listen(
                     msg.set_verdict(Verdict::Drop);
                     queue.verdict(msg)?;
                 }
+
+                stats.recv_dropped.fetch_add(1, Ordering::Relaxed);
             }
         }
 
