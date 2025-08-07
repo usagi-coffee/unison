@@ -91,8 +91,7 @@ pub fn listen(
                     let destination = destination.ip().clone();
                     ip_packet.set_destination(destination);
                     destination
-                }
-                else {
+                } else {
                     ip_packet.get_destination()
                 }
             };

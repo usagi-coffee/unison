@@ -16,7 +16,6 @@ use crate::utils::CommandGuard;
 
 #[derive(Debug)]
 pub struct ReassembledPacket {
-    pub id: u32,
     pub payload: Vec<u8>,
     pub ip_header_length: usize,
     pub fragments: Box<[Option<Box<[u8]>>]>,
@@ -121,7 +120,6 @@ pub fn listen(
                     }
 
                     entry.insert(ReassembledPacket {
-                        id: extra.sequence(),
                         ip_header_length: ip_header_len,
                         payload: header_or_payload,
                         destination: SocketAddrV4::new(destination_ip, destination_port),
@@ -160,17 +158,26 @@ pub fn listen(
             queue.verdict(msg)?;
         }
 
-        // Drop messages that have been buffered for too long
+        // Drop packets until the completed one
         if Instant::now().duration_since(last).as_millis() > configuration.timeout {
-            if let Some((&first, _)) = packets.iter().find(|(_, packet)| packet.completed) {
-                stats
-                    .recv_dropped
-                    .fetch_add((first - current) as u64, Ordering::Relaxed);
-                current = first;
+            while let Some(entry) = packets.first_entry() {
+                if entry.get().completed {
+                    let id = *entry.key();
+                    stats
+                        .recv_dropped
+                        .fetch_add((id - current) as u64, Ordering::Relaxed);
+                    current = id;
+                    break;
+                }
+
+                if let Some(mut msg) = entry.remove().msg {
+                    msg.set_verdict(Verdict::Drop);
+                    queue.verdict(msg)?;
+                }
             }
         }
 
-        while let Some(packet) = match packets.entry(current) {
+        while let Some(_) = match packets.entry(current) {
             btree_map::Entry::Occupied(entry) if !entry.get().completed => None,
             btree_map::Entry::Occupied(mut entry) => {
                 let packet = entry.get_mut();
@@ -216,7 +223,7 @@ pub fn listen(
             }
             btree_map::Entry::Vacant(_) => None,
         } {
-            current = packet.id + 1;
+            current = current + 1;
             last = Instant::now();
         }
 
