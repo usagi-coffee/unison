@@ -111,7 +111,7 @@ pub fn listen(
                 send_peak_throughput = send_throughput;
             }
 
-            let bytes = tc_backlog(interface.name.as_str()).unwrap_or(0);
+            let queued = interface.send_queue();
 
             let interface_tx = unsafe { interface.send_progress.get().unwrap_unchecked() };
             interface_tx.set_message(format!(
@@ -121,7 +121,7 @@ pub fn listen(
                 send_throughput,
                 send_peak_throughput,
                 send_total,
-                bytes / 1_000_000
+                queued.map_or("???".to_string(), |v| v.to_string())
             ));
 
             interface

@@ -2,6 +2,7 @@ use std::{
     collections::HashMap,
     marker::{Send, Sync},
     net::{IpAddr, Ipv4Addr, SocketAddrV4},
+    os::fd::AsRawFd,
     sync::{
         Arc, OnceLock,
         atomic::{AtomicBool, AtomicU64, Ordering},
@@ -187,6 +188,19 @@ impl Interface {
             send_last_bytes: AtomicU64::new(0),
         })
     }
+
+    pub fn send_queue(&self) -> Option<u32> {
+        let sock = self.socket.read();
+        const SIOCOUTQ: libc::c_ulong = 0x5411; // ioctl command for getting output queue length
+
+        let fd = sock.as_raw_fd();
+        let mut outq: libc::c_int = 0;
+        unsafe {
+            libc::ioctl(fd, SIOCOUTQ.try_into().ok()?, &mut outq);
+        }
+
+        Some(outq as u32)
+    }
 }
 
 impl Clone for Interface {
@@ -257,9 +271,9 @@ impl Source {
 #[bitfield]
 #[derive(Clone)]
 pub struct Payload {
-    pub fragments: B3,
     pub sequence: B26,
     pub fragment: B3,
+    pub fragments: B3,
 }
 
 impl Payload {
