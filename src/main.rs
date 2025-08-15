@@ -1,14 +1,10 @@
+use clap::Parser;
+use indicatif::MultiProgress;
+use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::process::Command;
-use std::sync::atomic::Ordering;
-use std::sync::{Arc, atomic::AtomicBool};
-
-use clap::Parser;
-
-use parking_lot::RwLock;
-
-use indicatif::MultiProgress;
-
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use types::{
     Cli, Interface, ReceiverConfiguration, SenderConfiguration, Stats, StatusConfiguration,
     WhitelistConfiguration,

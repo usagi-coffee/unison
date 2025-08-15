@@ -1,22 +1,19 @@
-use std::{
-    collections::HashMap,
-    marker::{Send, Sync},
-    net::{IpAddr, Ipv4Addr, SocketAddrV4},
-    os::fd::AsRawFd,
-    sync::{
-        Arc, OnceLock,
-        atomic::{AtomicBool, AtomicU64, Ordering},
-    },
-    time::Instant,
-};
-
 use atomic_time::AtomicInstant;
 use clap::{Parser, arg, command};
 use indicatif::ProgressBar;
-use modular_bitfield::{bitfield, specifiers::*};
+use modular_bitfield::bitfield;
+use modular_bitfield::specifiers::*;
 use o2o::o2o;
-use parking_lot::{RwLock, lock_api::RwLockUpgradableReadGuard};
+use parking_lot::RwLock;
+use parking_lot::lock_api::RwLockUpgradableReadGuard;
 use socket2::SockAddr;
+use std::collections::HashMap;
+use std::marker::{Send, Sync};
+use std::net::{IpAddr, Ipv4Addr, SocketAddrV4};
+use std::os::fd::AsRawFd;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, OnceLock};
+use std::time::Instant;
 
 use crate::utils::interface_ip;
 

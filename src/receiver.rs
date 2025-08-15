@@ -1,18 +1,16 @@
-use std::collections::{BTreeMap, HashMap, btree_map};
-use std::net::{Ipv4Addr, SocketAddrV4};
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::{Duration, Instant};
-
+use crate::types::{Interface, Payload, ReceiverConfiguration, Source, Stats};
+use crate::utils::CommandGuard;
 use nfq::{Queue, Verdict};
 use parking_lot::{RwLock, RwLockUpgradableReadGuard};
 use pnet::packet::ip::IpNextHeaderProtocols;
 use pnet::packet::ipv4::{Ipv4Packet, MutableIpv4Packet};
 use pnet::packet::udp::MutableUdpPacket;
 use socket2::SockAddr;
-
-use crate::types::{Interface, Payload, ReceiverConfiguration, Source, Stats};
-use crate::utils::CommandGuard;
+use std::collections::{BTreeMap, HashMap, btree_map};
+use std::net::{Ipv4Addr, SocketAddrV4};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Duration, Instant};
 
 #[derive(Debug)]
 pub struct ReassembledPacket {

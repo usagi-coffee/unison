@@ -1,4 +1,5 @@
-use std::{net::Ipv4Addr, process::Command};
+use std::net::Ipv4Addr;
+use std::process::Command;
 
 #[allow(dead_code)]
 pub fn interfaces() -> Vec<String> {
@@ -118,6 +119,7 @@ impl<'a> Drop for CommandGuard<'a> {
     }
 }
 
+#[allow(dead_code)]
 pub fn tc_backlog(interface: &str) -> Option<u64> {
     let output = Command::new("tc")
         .args(["-s", "qdisc", "show", "dev", interface])

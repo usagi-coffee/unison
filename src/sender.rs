@@ -1,15 +1,14 @@
-use std::collections::HashMap;
-use std::net::{SocketAddr, SocketAddrV4};
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
-
 use nfq::{Queue, Verdict};
 use parking_lot::RwLock;
 use pnet::packet::ip::IpNextHeaderProtocols;
 use pnet::packet::ipv4::{Ipv4Packet, MutableIpv4Packet};
 use pnet::packet::udp::MutableUdpPacket;
 use socket2::SockAddr;
+use std::collections::HashMap;
+use std::net::{SocketAddr, SocketAddrV4};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
 
 use crate::types::{Interface, Payload, SenderConfiguration, Source, Stats};
 use crate::utils::CommandGuard;

@@ -1,18 +1,15 @@
-use std::net::UdpSocket;
-use std::sync::{
-    Arc,
-    atomic::{AtomicBool, Ordering},
-};
-use std::time::{SystemTime, UNIX_EPOCH};
-
-use hmac::{Hmac, Mac, digest::FixedOutput};
-use sha2::Sha256;
-use socket2::SockAddr;
-
-type HmacSha256 = Hmac<Sha256>;
-
 use crate::types::{Interface, Stats, WhitelistConfiguration};
 use crate::utils::CommandGuard;
+use hmac::digest::FixedOutput;
+use hmac::{Hmac, Mac};
+use sha2::Sha256;
+use socket2::SockAddr;
+use std::net::UdpSocket;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{SystemTime, UNIX_EPOCH};
+
+type HmacSha256 = Hmac<Sha256>;
 
 pub fn listen(
     configuration: WhitelistConfiguration,

@@ -1,19 +1,10 @@
-use std::{
-    collections::HashMap,
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-    },
-};
-
-use crate::{
-    types::{Interface, Source, Stats, StatusConfiguration},
-    utils::tc_backlog,
-};
-
+use crate::types::{Interface, Source, Stats, StatusConfiguration};
 use indicatif::{MultiProgress, ProgressBar};
 use parking_lot::RwLock;
-use std::{thread, time::Duration};
+use std::collections::HashMap;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
 
 pub fn listen(
     progress: Arc<MultiProgress>,
@@ -47,7 +38,7 @@ pub fn listen(
             break;
         }
 
-        thread::sleep(Duration::from_millis(100));
+        std::thread::sleep(Duration::from_millis(100));
     }
 
     while running.load(Ordering::Relaxed) {
@@ -156,7 +147,7 @@ pub fn listen(
 
         recv_last_bytes = recv_bytes;
         send_last_bytes = send_bytes;
-        thread::sleep(Duration::from_millis(1000));
+        std::thread::sleep(Duration::from_millis(1000));
     }
 
     Ok(())
