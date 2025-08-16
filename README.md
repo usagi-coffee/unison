@@ -12,7 +12,7 @@ Flexible UDP transport layer designed for bi-directional multi-path delivery.
 - 🔁 Seamless bidirectional handling of UDP traffic
 - 🔐 HMAC-based authentication for automatic iptables whitelisting
 - 🎭 Source IP masquerading and restoration for single-source IP–dependent protocols like SRT
-- 🛡️ Anti-traffic-shaping (self-jitter & source-port rotation)
+- 🛡️ Anti-traffic-shaping (self-jitter, source-port rotation, payload obfuscation)
 
 ## 🚧 Planned Features
 
@@ -83,12 +83,19 @@ Network operators such as mobile networks sometimes detect perfectly periodic pa
   - `--source-port 0`: use a random source port per packet.
   - `--source-port 0 --source-rotate-ms <ms>`: pick a random high-numbered source port and replace it every `<ms>` milliseconds (rotating strategy that balances stability and port diversity).
 
+- Payload obfuscation
+  - `--obfuscate-payload`: Adds basic DPI resistance, trivially XORs udp payload with the sequence number to bypass naive signature checks.
+
 Examples:
 
 ```bash
-# Jitter: up to 10ms per packet, but no more than 100ms total jitter per second
-unison --ports 8888 --interfaces stream0 stream1 --jitter 10 --jitter-budget 100
+# Jitter up to 10ms per packet, but no more than 100ms total jitter per second
+unison --ports 8888 --jitter 10 --jitter-budget 100 --interfaces stream0 stream1
 
 # Rotate source port every 500ms
-unison --ports 8888 --interfaces stream0 stream1 --source-port 0 --source-rotate-ms 500
+unison --ports 8888 --source-port 0 --source-rotate-ms 500 --interfaces stream0 stream1
+
+# Obfuscate payload, remember to also set it on the server side!
+unison --ports 8888 --obfuscate-payload --interfaces stream0 stream1
+unison --server --ports 8888 --obfuscate-payload --interfaces eth0
 ```

@@ -111,7 +111,12 @@ pub struct Cli {
     #[arg(long)]
     pub secret: Option<String>,
 
-    /// This makes it harder for DPI to detect the traffic by xor-ing the payload with a sequence number
+    /// Obfuscate packet payloads to make DPI detection harder.
+    ///
+    /// When enabled, outgoing payload bytes are XOR'd with a sequence number
+    /// and the receiver will reverse the operation. This is a lightweight
+    /// obfuscation intended to reduce the effectiveness of simple DPI
+    /// signatures (not a replacement for cryptographic transport).
     #[arg(long, action, default_value = "false")]
     pub obfuscate_payload: bool,
 }
