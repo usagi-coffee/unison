@@ -149,6 +149,31 @@ pub fn listen(
                 .send_bytes
                 .fetch_add(ip_packet.get_total_length() as u64, Ordering::Relaxed);
 
+            if let Some(jitter) = configuration.jitter {
+                // Reset jitter buffer
+                if jitter_start.elapsed().as_millis() >= configuration.jitter_reset {
+                    jitter_start = Instant::now();
+                    jitter_used = 0;
+                }
+
+                // Calculate allowed jitter
+                let allowed = match jitter_budget {
+                    0 => jitter as u64,
+                    budget => {
+                        let remaining = (budget as u64).saturating_sub(jitter_used);
+                        std::cmp::min(remaining, jitter as u64)
+                    }
+                };
+
+                if allowed > 0 {
+                    let jitter = rng.gen_range(1..=allowed);
+                    if jitter > 0 {
+                        jitter_used += jitter;
+                        std::thread::sleep(Duration::from_millis(jitter));
+                    }
+                }
+            }
+
             for (fragment, interface) in interfaces.iter().enumerate() {
                 let fragment = fragment % fragments as usize;
                 let last = fragment == fragments as usize - 1;
@@ -196,31 +221,6 @@ pub fn listen(
                 let socket = interface.socket.write();
                 socket.set_mark(configuration.fwmark)?;
                 socket.set_header_included_v4(true)?;
-
-                if let Some(jitter) = configuration.jitter {
-                    // Reset jitter buffer
-                    if jitter_start.elapsed().as_millis() >= configuration.jitter_reset {
-                        jitter_start = Instant::now();
-                        jitter_used = 0;
-                    }
-
-                    // Calculate allowed jitter
-                    let allowed = match jitter_budget {
-                        0 => jitter as u64,
-                        budget => {
-                            let remaining = (budget as u64).saturating_sub(jitter_used);
-                            std::cmp::min(remaining, jitter as u64)
-                        }
-                    };
-
-                    if allowed > 0 {
-                        let jitter = rng.gen_range(1..=allowed);
-                        if jitter > 0 {
-                            jitter_used += jitter;
-                            std::thread::sleep(Duration::from_millis(jitter));
-                        }
-                    }
-                }
 
                 if let Some(_) = configuration.snat {
                     if let Some(source) = sources.read().get(&src_port) {
