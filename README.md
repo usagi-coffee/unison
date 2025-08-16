@@ -69,9 +69,11 @@ unison --remote 1.2.3.4 --secret mysecret --ports 8888 --interfaces stream0 stre
 unison --server --secret mysecret --ports 8888 --interfaces eth0
 ```
 
-## 🛡️ Avoiding Traffic Shaping
+## 🛡️ Reducing Risk of Traffic Shaping
 
-Network operators such as mobile networks sometimes detect perfectly periodic packet streams and apply shaping or rate-limiting, unison currently provides two complementary features to reduce shaping risk:
+> Your mileage may vary, these might just not work at all in your case.
+
+Network operators (such as mobile network providers) sometimes detect perfectly periodic packet streams and apply shaping or rate-limiting, to reduce the risk you can try out these:
 
 - Self-Jitter
   - `--jitter <ms>`: maximum jitter in milliseconds to sleep before sending a packet/fragment. The actual sleep is sampled uniformly in `[1, jitter]`.
