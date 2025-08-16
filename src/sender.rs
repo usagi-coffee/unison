@@ -44,6 +44,10 @@ pub fn listen(
     // Create a single RNG for this sender thread and reuse it for all random ops
     let mut rng = rand::thread_rng();
 
+    let jitter_budget = configuration.jitter_budget;
+    let mut jitter_used: u64 = 0;
+    let mut jitter_start = Instant::now();
+
     let mut src_strategy = match configuration.source_port {
         Some(0) => match configuration.source_rotate_ms {
             Some(ms) => SourceStrategy::Rotating {
@@ -193,6 +197,31 @@ pub fn listen(
                 socket.set_mark(configuration.fwmark)?;
                 socket.set_header_included_v4(true)?;
 
+                if let Some(jitter) = configuration.jitter {
+                    // Reset jitter buffer
+                    if jitter_start.elapsed().as_millis() >= configuration.jitter_reset {
+                        jitter_start = Instant::now();
+                        jitter_used = 0;
+                    }
+
+                    // Calculate allowed jitter
+                    let allowed = match jitter_budget {
+                        0 => jitter as u64,
+                        budget => {
+                            let remaining = (budget as u64).saturating_sub(jitter_used);
+                            std::cmp::min(remaining, jitter as u64)
+                        }
+                    };
+
+                    if allowed > 0 {
+                        let jitter = rng.gen_range(1..=allowed);
+                        if jitter > 0 {
+                            jitter_used += jitter;
+                            std::thread::sleep(Duration::from_millis(jitter));
+                        }
+                    }
+                }
+
                 if let Some(_) = configuration.snat {
                     if let Some(source) = sources.read().get(&src_port) {
                         let addrs = &source.addrs.read();
@@ -204,12 +233,6 @@ pub fn listen(
                             packet[16..20].copy_from_slice(&dst_addr.ip().octets());
                             packet[ip_header_len + 2..ip_header_len + 4]
                                 .copy_from_slice(&dst_addr.port().to_be_bytes());
-
-                            if let Some(jitter_ms) = configuration.jitter {
-                                let jitter = rng.gen_range(0..=jitter_ms as u64);
-                                std::thread::sleep(Duration::from_millis(jitter));
-                            }
-
                             if let Err(error) = socket.send_to(&packet, &dst) {
                                 eprintln!(
                                     "sender: {}: failed to send with {}",
@@ -224,10 +247,6 @@ pub fn listen(
                         .copy_from_slice(&src_port.to_be_bytes());
 
                     socket.set_header_included_v4(true)?;
-                    if let Some(jitter_ms) = configuration.jitter {
-                        let jitter = rng.gen_range(0..=jitter_ms as u64);
-                        std::thread::sleep(Duration::from_millis(jitter));
-                    }
 
                     if let Err(error) = socket.send_to(
                         &packet,

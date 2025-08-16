@@ -87,6 +87,14 @@ pub struct Cli {
     #[arg(long)]
     pub jitter: Option<u128>,
 
+    /// Maximum total jitter sleep allowed per 1 second window (milliseconds)
+    #[arg(long, default_value = "100")]
+    pub jitter_budget: u128,
+
+    /// Reset jitter budget after this many milliseconds
+    #[arg(long, default_value = "1000")]
+    pub jitter_reset: u128,
+
     #[arg(long)]
     pub source_port: Option<u16>,
 
@@ -121,6 +129,8 @@ pub struct SenderConfiguration {
     pub source_port: Option<u16>,
     pub source_rotate_ms: Option<u128>,
     pub jitter: Option<u128>,
+    pub jitter_budget: u128,
+    pub jitter_reset: u128,
 }
 
 #[derive(o2o)]
