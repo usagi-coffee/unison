@@ -140,3 +140,10 @@ pub fn tc_backlog(interface: &str) -> Option<u64> {
     }
     None
 }
+
+pub const XOR_KEY: &[u8] = b"very-secret";
+pub fn xor_in_place(buf: &mut [u8], seed: usize) {
+    for (i, b) in buf.iter_mut().enumerate() {
+        *b ^= XOR_KEY[(seed as usize + i) % XOR_KEY.len()];
+    }
+}

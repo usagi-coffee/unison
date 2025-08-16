@@ -110,6 +110,10 @@ pub struct Cli {
     // Secret used for HMAC whitelisting
     #[arg(long)]
     pub secret: Option<String>,
+
+    /// This makes it harder for DPI to detect the traffic by xor-ing the payload with a sequence number
+    #[arg(long, action, default_value = "false")]
+    pub obfuscate_payload: bool,
 }
 
 #[derive(o2o)]
@@ -131,6 +135,7 @@ pub struct SenderConfiguration {
     pub jitter: Option<u128>,
     pub jitter_budget: u128,
     pub jitter_reset: u128,
+    pub obfuscate_payload: bool,
 }
 
 #[derive(o2o)]
@@ -141,8 +146,8 @@ pub struct ReceiverConfiguration {
     pub recv_queue: u16,
     pub recv_queue_max_len: u32,
     pub timeout: u128,
-
     pub snat: Option<SocketAddrV4>,
+    pub obfuscate_payload: bool,
 }
 
 #[derive(o2o)]

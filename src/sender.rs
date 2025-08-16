@@ -12,7 +12,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use crate::types::{Interface, Payload, SenderConfiguration, Source, Stats};
-use crate::utils::CommandGuard;
+use crate::utils::{CommandGuard, xor_in_place};
 
 enum SourceStrategy {
     Original,
@@ -102,7 +102,7 @@ pub fn listen(
             && ip_packet.get_next_level_protocol() == IpNextHeaderProtocols::Udp
             && let ip_header_len = 4 * ip_packet.get_header_length() as usize
             && let (ip_header, udp_packet) = payload.split_at_mut(ip_header_len)
-            && let (udp_header, udp_payload) = udp_packet.split_at_mut(UDP_HEADER)
+            && let (udp_header, mut udp_payload) = udp_packet.split_at_mut(UDP_HEADER)
             && let Some(mut ip_packet) = MutableIpv4Packet::new(ip_header)
             && let Some(mut udp_packet) = MutableUdpPacket::new(udp_header)
         {
@@ -172,6 +172,10 @@ pub fn listen(
                         std::thread::sleep(Duration::from_millis(jitter));
                     }
                 }
+            }
+
+            if configuration.obfuscate_payload {
+                xor_in_place(&mut udp_payload, id as usize);
             }
 
             for (fragment, interface) in interfaces.iter().enumerate() {
