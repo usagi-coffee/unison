@@ -41,10 +41,13 @@ pub fn listen(
 
     let mut id = 0u32;
 
+    // Create a single RNG for this sender thread and reuse it for all random ops
+    let mut rng = rand::thread_rng();
+
     let mut src_strategy = match configuration.source_port {
         Some(0) => match configuration.source_rotate_ms {
             Some(ms) => SourceStrategy::Rotating {
-                current: rand::thread_rng().gen_range(10000..=65535),
+                current: rng.gen_range(10000..=65535),
                 interval: Duration::from_millis(ms as u64),
                 last: Instant::now(),
             },
@@ -111,14 +114,14 @@ pub fn listen(
             let src_port = match &mut src_strategy {
                 SourceStrategy::Original => udp_packet.get_source(),
                 SourceStrategy::Fixed(p) => *p,
-                SourceStrategy::Random => rand::thread_rng().gen_range(10000..=65535),
+                SourceStrategy::Random => rng.gen_range(10000..=65535),
                 SourceStrategy::Rotating {
                     current,
                     interval,
                     last,
                 } => {
                     if last.elapsed() >= *interval {
-                        *current = rand::thread_rng().gen_range(10000..=65535);
+                        *current = rng.gen_range(10000..=65535);
                         *last = Instant::now();
                     }
                     *current
@@ -202,6 +205,11 @@ pub fn listen(
                             packet[ip_header_len + 2..ip_header_len + 4]
                                 .copy_from_slice(&dst_addr.port().to_be_bytes());
 
+                            if let Some(jitter_ms) = configuration.jitter {
+                                let jitter = rng.gen_range(0..=jitter_ms as u64);
+                                std::thread::sleep(Duration::from_millis(jitter));
+                            }
+
                             if let Err(error) = socket.send_to(&packet, &dst) {
                                 eprintln!(
                                     "sender: {}: failed to send with {}",
@@ -216,6 +224,11 @@ pub fn listen(
                         .copy_from_slice(&src_port.to_be_bytes());
 
                     socket.set_header_included_v4(true)?;
+                    if let Some(jitter_ms) = configuration.jitter {
+                        let jitter = rng.gen_range(0..=jitter_ms as u64);
+                        std::thread::sleep(Duration::from_millis(jitter));
+                    }
+
                     if let Err(error) = socket.send_to(
                         &packet,
                         &SockAddr::from(SocketAddr::V4(SocketAddrV4::new(dst, dst_port))).into(),

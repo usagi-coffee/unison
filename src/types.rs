@@ -83,6 +83,10 @@ pub struct Cli {
     #[arg(long, default_value = "60000")]
     pub ttl: u128,
 
+    /// Add jitter before sending each packet (milliseconds)
+    #[arg(long)]
+    pub jitter: Option<u128>,
+
     #[arg(long)]
     pub source_port: Option<u16>,
 
@@ -116,6 +120,7 @@ pub struct SenderConfiguration {
     pub ttl: u128,
     pub source_port: Option<u16>,
     pub source_rotate_ms: Option<u128>,
+    pub jitter: Option<u128>,
 }
 
 #[derive(o2o)]
