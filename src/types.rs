@@ -83,9 +83,11 @@ pub struct Cli {
     #[arg(long, default_value = "60000")]
     pub ttl: u128,
 
-    /// Override source port for outgoing packets. Use `0` to randomize per-packet in 10000..=65535 range.
     #[arg(long)]
     pub source_port: Option<u16>,
+
+    #[arg(long)]
+    pub source_rotate_ms: Option<u128>,
 
     /// Extra features, might be removed in the future
 
@@ -113,6 +115,7 @@ pub struct SenderConfiguration {
     pub snat: Option<SocketAddrV4>,
     pub ttl: u128,
     pub source_port: Option<u16>,
+    pub source_rotate_ms: Option<u128>,
 }
 
 #[derive(o2o)]

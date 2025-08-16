@@ -9,10 +9,21 @@ use std::collections::HashMap;
 use std::net::{SocketAddr, SocketAddrV4};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::types::{Interface, Payload, SenderConfiguration, Source, Stats};
 use crate::utils::CommandGuard;
+
+enum SourceStrategy {
+    Original,
+    Fixed(u16),
+    Random,
+    Rotating {
+        current: u16,
+        interval: Duration,
+        last: Instant,
+    },
+}
 
 pub fn listen(
     configuration: SenderConfiguration,
@@ -29,6 +40,19 @@ pub fn listen(
     queue.set_nonblocking(true);
 
     let mut id = 0u32;
+
+    let mut src_strategy = match configuration.source_port {
+        Some(0) => match configuration.source_rotate_ms {
+            Some(ms) => SourceStrategy::Rotating {
+                current: rand::thread_rng().gen_range(10000..=65535),
+                interval: Duration::from_millis(ms as u64),
+                last: Instant::now(),
+            },
+            None => SourceStrategy::Random,
+        },
+        Some(p) => SourceStrategy::Fixed(p),
+        None => SourceStrategy::Original,
+    };
 
     stats.send_ready.store(true, Ordering::Relaxed);
     while running.load(Ordering::Relaxed) {
@@ -84,10 +108,21 @@ pub fn listen(
             let fragment_len = udp_payload.len() / fragments as usize;
             let fragment_remainder = udp_payload.len() % fragments as usize;
 
-            let src_port = match configuration.source_port {
-                Some(port) if port == 0 => rand::thread_rng().gen_range(10000..=65535),
-                Some(port) => port,
-                None => udp_packet.get_source(),
+            let src_port = match &mut src_strategy {
+                SourceStrategy::Original => udp_packet.get_source(),
+                SourceStrategy::Fixed(p) => *p,
+                SourceStrategy::Random => rand::thread_rng().gen_range(10000..=65535),
+                SourceStrategy::Rotating {
+                    current,
+                    interval,
+                    last,
+                } => {
+                    if last.elapsed() >= *interval {
+                        *current = rand::thread_rng().gen_range(10000..=65535);
+                        *last = Instant::now();
+                    }
+                    *current
+                }
             };
             let dst_port = udp_packet.get_destination();
             let dst = {
