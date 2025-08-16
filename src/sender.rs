@@ -3,6 +3,7 @@ use parking_lot::RwLock;
 use pnet::packet::ip::IpNextHeaderProtocols;
 use pnet::packet::ipv4::{Ipv4Packet, MutableIpv4Packet};
 use pnet::packet::udp::MutableUdpPacket;
+use rand::Rng;
 use socket2::SockAddr;
 use std::collections::HashMap;
 use std::net::{SocketAddr, SocketAddrV4};
@@ -83,7 +84,11 @@ pub fn listen(
             let fragment_len = udp_payload.len() / fragments as usize;
             let fragment_remainder = udp_payload.len() % fragments as usize;
 
-            let src_port = udp_packet.get_source();
+            let src_port = match configuration.source_port {
+                Some(port) if port == 0 => rand::thread_rng().gen_range(10000..=65535),
+                Some(port) => port,
+                None => udp_packet.get_source(),
+            };
             let dst_port = udp_packet.get_destination();
             let dst = {
                 if let Some(destination) = configuration.destination {
@@ -156,9 +161,11 @@ pub fn listen(
                         for (dst, _) in addrs.iter() {
                             let dst_addr = dst.as_socket_ipv4().unwrap();
                             packet[12..16].copy_from_slice(&source.ip.octets());
-                            packet[20..22].copy_from_slice(&source.port.to_be_bytes());
+                            packet[ip_header_len..ip_header_len + 2]
+                                .copy_from_slice(&source.port.to_be_bytes());
                             packet[16..20].copy_from_slice(&dst_addr.ip().octets());
-                            packet[22..24].copy_from_slice(&dst_addr.port().to_be_bytes());
+                            packet[ip_header_len + 2..ip_header_len + 4]
+                                .copy_from_slice(&dst_addr.port().to_be_bytes());
 
                             if let Err(error) = socket.send_to(&packet, &dst) {
                                 eprintln!(
@@ -170,6 +177,8 @@ pub fn listen(
                     }
                 } else {
                     packet[12..16].copy_from_slice(&interface.ip.octets());
+                    packet[ip_header_len + 0..ip_header_len + 2]
+                        .copy_from_slice(&src_port.to_be_bytes());
 
                     socket.set_header_included_v4(true)?;
                     if let Err(error) = socket.send_to(

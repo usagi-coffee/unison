@@ -156,7 +156,7 @@ pub fn netfilter() {
     assert!(status.success(), "Failed to load netfilter_queue module");
 }
 
-pub fn interfaces(cli: &Cli) -> Vec<CommandGuard> {
+pub fn interfaces(cli: &Cli) -> Vec<CommandGuard<'_>> {
     let mut rules = Vec::new();
     if let Some(snat) = cli.snat {
         rules.push(
