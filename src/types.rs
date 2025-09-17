@@ -299,7 +299,7 @@ impl Source {
 }
 
 #[bitfield]
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Payload {
     pub sequence: B26,
     pub fragment: B3,
@@ -323,6 +323,7 @@ pub struct Stats {
     pub recv_ready: AtomicBool,
     pub recv_total: AtomicU64,
     pub recv_dropped: AtomicU64,
+    pub recv_invalid: AtomicU64,
     pub recv_current: AtomicU64,
     pub recv_bytes: AtomicU64,
     pub recv_out_of_order: AtomicU64,
@@ -344,6 +345,7 @@ impl Stats {
             recv_total: AtomicU64::new(0),
             recv_current: AtomicU64::new(0),
             recv_dropped: AtomicU64::new(0),
+            recv_invalid: AtomicU64::new(0),
             recv_bytes: AtomicU64::new(0),
             recv_out_of_order: AtomicU64::new(0),
 

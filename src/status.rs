@@ -121,12 +121,13 @@ pub fn listen(
         }
 
         rx.set_message(format!(
-            "[RX] ---------------- {:.2} ({:.2}) Mbps | 🧮 {:.3} MB | 📦 {:>6} | ❌ {:>4}",
+            "[RX] ---------------- {:.2} ({:.2}) Mbps | 🧮 {:.3} MB | 📦 {:>6} | ❌ {:>4}/{:>4}",
             recv_throughput,
             recv_peak_throughput,
             recv_total,
             format!("{}", stats.recv_current.load(Ordering::Relaxed)),
-            stats.recv_dropped.load(Ordering::Relaxed),
+            format!("{}", stats.recv_dropped.load(Ordering::Relaxed)),
+            format!("{}", stats.recv_invalid.load(Ordering::Relaxed)),
         ));
 
         for source in sources.read().iter() {

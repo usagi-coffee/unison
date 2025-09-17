@@ -71,99 +71,108 @@ pub fn listen(
             && let Ok(extra_payload) = udp_full_payload[udp_payload.len()..].try_into()
             && let Some(mut ip_packet) = MutableIpv4Packet::new(ip_header)
             && let Some(mut udp_packet) = MutableUdpPacket::new(udp_header)
-            && let extra = Payload::from_bytes(extra_payload)
-            && extra.sequence() >= current
         {
-            let source = ip_packet.get_source();
-            let port = udp_packet.get_source();
-            let destination_ip = ip_packet.get_destination();
-            let destination_port = udp_packet.get_destination();
+            let extra = Payload::from_bytes(extra_payload);
+            if extra.sequence() >= current {
+                let source = ip_packet.get_source();
+                let port = udp_packet.get_source();
+                let destination_ip = ip_packet.get_destination();
+                let destination_port = udp_packet.get_destination();
 
-            if let Some(snat) = &configuration.snat {
-                ip_packet.set_source(*snat.ip());
-                udp_packet.set_source(snat.port());
+                if let Some(snat) = &configuration.snat {
+                    ip_packet.set_source(*snat.ip());
+                    udp_packet.set_source(snat.port());
 
-                let sources = sources.upgradable_read();
-                if sources.contains_key(&destination_port) {
-                    let src = sources.get(&destination_port).unwrap();
-                    src.attach(SockAddr::from(SocketAddrV4::new(source, port)));
-                } else {
-                    let mut write = RwLockUpgradableReadGuard::upgrade(sources);
-                    let src = Source::new(destination_ip, destination_port, *snat)
-                        .expect("Failed to bind SNAT port");
-                    src.attach(SockAddr::from(SocketAddrV4::new(source, port)));
-                    write.insert(destination_port, src);
-                }
-            }
-
-            let mut udp_payload = udp_payload.to_vec();
-            if configuration.obfuscate_payload {
-                xor_in_place(&mut udp_payload, extra.sequence() as usize);
-            }
-
-            match packets.entry(extra.sequence()) {
-                btree_map::Entry::Vacant(entry) => {
-                    let mut header_or_payload: Vec<u8>;
-                    let mut fragments = vec![None; extra.fragments() as usize].into_boxed_slice();
-
-                    // Fragmented
-                    if fragments.len() > 1 {
-                        let approx_udp_length =
-                            UDP_HEADER + (udp_payload.len() * extra.fragments() as usize + 16);
-
-                        header_or_payload = Vec::with_capacity(ip_header.len() + approx_udp_length);
-                        header_or_payload.extend_from_slice(ip_header);
-                        header_or_payload.extend_from_slice(udp_header);
-                        fragments[extra.fragment() as usize] = Some(udp_payload.into_boxed_slice());
+                    let sources = sources.upgradable_read();
+                    if sources.contains_key(&destination_port) {
+                        let src = sources.get(&destination_port).unwrap();
+                        src.attach(SockAddr::from(SocketAddrV4::new(source, port)));
                     } else {
-                        let udp_length = UDP_HEADER + udp_payload.len();
-                        header_or_payload = Vec::with_capacity(ip_header_len + udp_length);
-                        header_or_payload.extend_from_slice(ip_header);
-                        header_or_payload.extend_from_slice(udp_header);
-                        header_or_payload.extend(udp_payload);
-                        completed = u32::max(completed, extra.sequence());
+                        let mut write = RwLockUpgradableReadGuard::upgrade(sources);
+                        let src = Source::new(destination_ip, destination_port, *snat)
+                            .expect("Failed to bind SNAT port");
+                        src.attach(SockAddr::from(SocketAddrV4::new(source, port)));
+                        write.insert(destination_port, src);
                     }
-
-                    entry.insert(ReassembledPacket {
-                        ip_header_length: ip_header_len,
-                        payload: header_or_payload,
-                        destination: SocketAddrV4::new(destination_ip, destination_port),
-                        completed: fragments.len() < 2,
-                        fragments,
-                        msg: if configuration.snat.is_none() {
-                            Some(msg)
-                        } else {
-                            msg.set_verdict(Verdict::Drop);
-                            queue.verdict(msg)?;
-                            None
-                        },
-                    });
                 }
-                // Add fragments
-                btree_map::Entry::Occupied(mut entry) if extra.fragments() > 1 => {
-                    let packet = entry.get_mut();
-                    if packet.fragments[extra.fragment() as usize].is_none() {
-                        packet.fragments[extra.fragment() as usize] =
-                            Some(udp_payload.into_boxed_slice());
-                        packet.completed = packet.fragments.iter().all(|f| f.is_some());
-                        if packet.completed {
+
+                let mut udp_payload = udp_payload.to_vec();
+                if configuration.obfuscate_payload {
+                    xor_in_place(&mut udp_payload, extra.sequence() as usize);
+                }
+
+                match packets.entry(extra.sequence()) {
+                    btree_map::Entry::Vacant(entry) => {
+                        let mut header_or_payload: Vec<u8>;
+                        let mut fragments =
+                            vec![None; extra.fragments() as usize].into_boxed_slice();
+
+                        // Fragmented
+                        if fragments.len() > 1 {
+                            let approx_udp_length =
+                                UDP_HEADER + (udp_payload.len() * extra.fragments() as usize + 16);
+
+                            header_or_payload =
+                                Vec::with_capacity(ip_header.len() + approx_udp_length);
+                            header_or_payload.extend_from_slice(ip_header);
+                            header_or_payload.extend_from_slice(udp_header);
+                            fragments[extra.fragment() as usize] =
+                                Some(udp_payload.into_boxed_slice());
+                        } else {
+                            let udp_length = UDP_HEADER + udp_payload.len();
+                            header_or_payload = Vec::with_capacity(ip_header_len + udp_length);
+                            header_or_payload.extend_from_slice(ip_header);
+                            header_or_payload.extend_from_slice(udp_header);
+                            header_or_payload.extend(udp_payload);
                             completed = u32::max(completed, extra.sequence());
                         }
-                    }
 
-                    msg.set_verdict(Verdict::Drop);
-                    queue.verdict(msg)?;
+                        entry.insert(ReassembledPacket {
+                            ip_header_length: ip_header_len,
+                            payload: header_or_payload,
+                            destination: SocketAddrV4::new(destination_ip, destination_port),
+                            completed: fragments.len() < 2,
+                            fragments,
+                            msg: if configuration.snat.is_none() {
+                                Some(msg)
+                            } else {
+                                msg.set_verdict(Verdict::Drop);
+                                queue.verdict(msg)?;
+                                None
+                            },
+                        });
+                    }
+                    // Add fragments
+                    btree_map::Entry::Occupied(mut entry) if extra.fragments() > 1 => {
+                        let packet = entry.get_mut();
+                        if packet.fragments[extra.fragment() as usize].is_none() {
+                            packet.fragments[extra.fragment() as usize] =
+                                Some(udp_payload.into_boxed_slice());
+                            packet.completed = packet.fragments.iter().all(|f| f.is_some());
+                            if packet.completed {
+                                completed = u32::max(completed, extra.sequence());
+                            }
+                        }
+
+                        msg.set_verdict(Verdict::Drop);
+                        queue.verdict(msg)?;
+                    }
+                    // Duplicate
+                    btree_map::Entry::Occupied(_) => {
+                        msg.set_verdict(Verdict::Drop);
+                        queue.verdict(msg)?;
+                    }
                 }
-                // Duplicate
-                btree_map::Entry::Occupied(_) => {
-                    msg.set_verdict(Verdict::Drop);
-                    queue.verdict(msg)?;
-                }
+            } else {
+                // Late redundant packet
+                msg.set_verdict(Verdict::Drop);
+                queue.verdict(msg)?;
             }
         } else {
             // Not compatible UDP packet
             msg.set_verdict(Verdict::Drop);
             queue.verdict(msg)?;
+            stats.recv_invalid.fetch_add(1 as u64, Ordering::Relaxed);
         }
 
         // Drop packets until the completed one
@@ -173,10 +182,11 @@ pub fn listen(
                 && let id = *entry.key()
                 && id <= completed
             {
-                if entry.get().completed {
+                if entry.get().completed && id >= current {
                     stats
                         .recv_dropped
                         .fetch_add((id - current) as u64, Ordering::Relaxed);
+
                     current = id;
                     break;
                 }
