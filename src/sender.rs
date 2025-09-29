@@ -41,13 +41,7 @@ pub fn listen(
 
     let mut id = 0u32;
 
-    // Create a single RNG for this sender thread and reuse it for all random ops
     let mut rng = rand::thread_rng();
-
-    let jitter_budget = configuration.jitter_budget;
-    let mut jitter_used: u64 = 0;
-    let mut jitter_start = Instant::now();
-
     let mut src_strategy = match configuration.source_port {
         Some(0) => match configuration.source_rotate_ms {
             Some(ms) => SourceStrategy::Rotating {
@@ -148,35 +142,6 @@ pub fn listen(
             stats
                 .send_bytes
                 .fetch_add(ip_packet.get_total_length() as u64, Ordering::Relaxed);
-
-            if let Some(jitter) = configuration.jitter {
-                // Reset jitter buffer
-                if jitter_start.elapsed().as_millis() >= configuration.jitter_reset {
-                    jitter_start = Instant::now();
-                    jitter_used = 0;
-                }
-
-                // Calculate allowed jitter
-                let allowed = match jitter_budget {
-                    0 => jitter as u64,
-                    budget => {
-                        let remaining = (budget as u64).saturating_sub(jitter_used);
-                        std::cmp::min(remaining, jitter as u64)
-                    }
-                };
-
-                if allowed > 0 {
-                    let jitter = rng.gen_range(1..=allowed);
-                    if jitter > 0 {
-                        jitter_used += jitter;
-                        std::thread::sleep(Duration::from_millis(jitter));
-                    }
-                }
-            }
-
-            if configuration.obfuscate_payload {
-                xor_in_place(&mut udp_payload, id as usize);
-            }
 
             for (fragment, interface) in interfaces.iter().enumerate() {
                 let fragment = fragment % fragments as usize;
