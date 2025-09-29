@@ -42,7 +42,7 @@ unison --server --ports 8888 --interfaces eth0
 
 ## Consistent Source IP/Port
 
-Some protocols—like SRT, RTP, or other connection-oriented UDP protocols require all packets to originate from a single consistent source IP and port. When using multi-path transport, this consistency can be lost, leading to session instability or rejections.
+Some protocols like SRT, RTP, or other connection-oriented UDP protocols require all packets to originate from a single consistent source IP and port. When using multi-path transport, this consistency can be lost, leading to session instability or rejections.
 
 Unison supports source address and port rewriting to preserve consistency. This is done at the ip/udp header level and ensures that the socket sees all packets as coming from the same source.
 
