@@ -1,16 +1,27 @@
-use crate::types::{Interface, Payload, ReceiverConfiguration, Source, Stats};
+use crate::types::{Cli, Interface, Payload, Source, Stats};
 use crate::utils::CommandGuard;
 use nfq::{Queue, Verdict};
+use o2o::o2o;
 use parking_lot::{RwLock, RwLockUpgradableReadGuard};
 use pnet::packet::ip::IpNextHeaderProtocols;
 use pnet::packet::ipv4::{Ipv4Packet, MutableIpv4Packet};
 use pnet::packet::udp::MutableUdpPacket;
-use socket2::SockAddr;
 use std::collections::{BTreeMap, HashMap, btree_map};
-use std::net::{Ipv4Addr, SocketAddrV4};
+use std::net::{Ipv4Addr, SocketAddrV4, UdpSocket};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
+
+#[derive(o2o)]
+#[from_owned(Cli)]
+pub struct Receiver {
+    pub server: bool,
+    pub ports: Option<Vec<u16>>,
+    pub recv_queue: u16,
+    pub recv_queue_max_len: u32,
+    pub timeout: u128,
+    pub snat: Option<SocketAddrV4>,
+}
 
 #[derive(Debug)]
 pub struct ReassembledPacket {
@@ -23,18 +34,21 @@ pub struct ReassembledPacket {
 }
 
 pub fn listen(
-    configuration: ReceiverConfiguration,
+    state: Receiver,
     _interfaces: Arc<Vec<Interface>>,
     sources: Arc<RwLock<HashMap<u16, Source>>>,
     running: Arc<AtomicBool>,
     stats: Arc<Stats>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let _rules = iptables(&configuration);
+    let _rules = iptables(&state);
 
     let mut queue = Queue::open()?;
-    queue.bind(configuration.recv_queue)?;
-    queue.set_queue_max_len(configuration.recv_queue, configuration.recv_queue_max_len)?;
+    queue.bind(state.recv_queue)?;
+    queue.set_queue_max_len(state.recv_queue, state.recv_queue_max_len)?;
     queue.set_nonblocking(true);
+
+    let socket = UdpSocket::bind(format!("0.0.0.0:{}", 7566))?;
+    socket.set_nonblocking(true)?;
 
     let mut packets: BTreeMap<u32, ReassembledPacket> = BTreeMap::new();
     let mut current: u32 = 0;
@@ -72,30 +86,33 @@ pub fn listen(
             && let Some(mut ip_packet) = MutableIpv4Packet::new(ip_header)
             && let Some(mut udp_packet) = MutableUdpPacket::new(udp_header)
         {
+            let source_ip = ip_packet.get_source();
+            let source_port = udp_packet.get_source();
+            let source_addr = SocketAddrV4::new(source_ip, source_port);
+            let destination_ip = ip_packet.get_destination();
+            let destination_port = udp_packet.get_destination();
+
+            // Track every source
+            let sources = sources.upgradable_read();
+            if sources.contains_key(&destination_port) {
+                let src = sources.get(&destination_port).unwrap();
+                src.attach(source_addr.into());
+            } else {
+                let mut write = RwLockUpgradableReadGuard::upgrade(sources);
+                let src = Source::new(destination_ip, destination_port, state.snat)
+                    .expect("Failed to bind SNAT port");
+                src.attach(source_addr.into());
+                write.insert(destination_port, src);
+            }
+
+            // Masquerade
+            if let Some(snat) = state.snat {
+                ip_packet.set_source(*snat.ip());
+                udp_packet.set_source(snat.port());
+            }
+
             let extra = Payload::from_bytes(extra_payload);
             if extra.sequence() >= current {
-                let source = ip_packet.get_source();
-                let port = udp_packet.get_source();
-                let destination_ip = ip_packet.get_destination();
-                let destination_port = udp_packet.get_destination();
-
-                if let Some(snat) = &configuration.snat {
-                    ip_packet.set_source(*snat.ip());
-                    udp_packet.set_source(snat.port());
-
-                    let sources = sources.upgradable_read();
-                    if sources.contains_key(&destination_port) {
-                        let src = sources.get(&destination_port).unwrap();
-                        src.attach(SockAddr::from(SocketAddrV4::new(source, port)));
-                    } else {
-                        let mut write = RwLockUpgradableReadGuard::upgrade(sources);
-                        let src = Source::new(destination_ip, destination_port, *snat)
-                            .expect("Failed to bind SNAT port");
-                        src.attach(SockAddr::from(SocketAddrV4::new(source, port)));
-                        write.insert(destination_port, src);
-                    }
-                }
-
                 match packets.entry(extra.sequence()) {
                     btree_map::Entry::Vacant(entry) => {
                         let mut header_or_payload: Vec<u8>;
@@ -128,7 +145,7 @@ pub fn listen(
                             destination: SocketAddrV4::new(destination_ip, destination_port),
                             completed: fragments.len() < 2,
                             fragments,
-                            msg: if configuration.snat.is_none() {
+                            msg: if state.snat.is_none() {
                                 Some(msg)
                             } else {
                                 msg.set_verdict(Verdict::Drop);
@@ -171,8 +188,7 @@ pub fn listen(
         }
 
         // Drop packets until the completed one
-        if completed > 0 && Instant::now().duration_since(last).as_millis() > configuration.timeout
-        {
+        if completed > 0 && Instant::now().duration_since(last).as_millis() > state.timeout {
             while let Some(entry) = packets.first_entry()
                 && let id = *entry.key()
                 && id <= completed
@@ -223,9 +239,10 @@ pub fn listen(
                 ip_packet.set_checksum(0);
 
                 // Send from the SNAT source
-                if let Some(_) = &configuration.snat {
+                if let Some(_) = &state.snat {
                     if let Some(src) = sources.read().get(&packet.destination.port()) {
-                        let socket = src.socket.read();
+                        // SAFETY: if snat is Some then socket is Some too
+                        let socket = src.socket.as_ref().unwrap().read();
                         socket.set_header_included_v4(true)?;
                         socket.send_to(&payload, &packet.destination.into())?;
                     }
@@ -253,22 +270,22 @@ pub fn listen(
     Ok(())
 }
 
-fn iptables(configuration: &ReceiverConfiguration) -> Vec<CommandGuard<'_>> {
+fn iptables(state: &Receiver) -> Vec<CommandGuard<'_>> {
     let mut rules = vec![];
 
-    if !configuration.server {
+    if !state.server {
         // On client redirect packets coming from the server to nfqueue
-        if let Some(ports) = &configuration.ports {
+        if let Some(ports) = &state.ports {
             for port in ports {
                 rules.push(
                     CommandGuard::new("iptables")
                         .call(format!(
                             "-t mangle -A PREROUTING -p udp --sport {} -j NFQUEUE --queue-num {}",
-                            port, configuration.recv_queue
+                            port, state.recv_queue
                         ))
                         .cleanup(format!(
                             "-t mangle -D PREROUTING -p udp --sport {} -j NFQUEUE --queue-num {}",
-                            port, configuration.recv_queue
+                            port, state.recv_queue
                         )),
                 );
             }
@@ -276,21 +293,21 @@ fn iptables(configuration: &ReceiverConfiguration) -> Vec<CommandGuard<'_>> {
     }
     // On server redirect packets coming from the client to nfqueue
     else {
-        if let Some(ports) = &configuration.ports {
+        if let Some(ports) = &state.ports {
             for port in ports {
                 rules.push(
                       CommandGuard::new("iptables")
                           .call(format!(
                               "-t mangle -A INPUT -p udp --dport {} ! -s {} -m mark --mark 0 -j NFQUEUE --queue-num {}",
                               port,
-                              if configuration.snat.is_some() { configuration.snat.unwrap().ip().clone() } else { Ipv4Addr::new(1, 2, 3, 4) },
-                              configuration.recv_queue
+                              if state.snat.is_some() { state.snat.unwrap().ip().clone() } else { Ipv4Addr::new(1, 2, 3, 4) },
+                              state.recv_queue
                           ))
                           .cleanup(format!(
                               "-t mangle -D INPUT -p udp --dport {} ! -s {} -m mark --mark 0 -j NFQUEUE --queue-num {}",
                               port,
-                              if configuration.snat.is_some() { configuration.snat.unwrap().ip().clone() } else { Ipv4Addr::new(1, 2, 3, 4) },
-                              configuration.recv_queue
+                              if state.snat.is_some() { state.snat.unwrap().ip().clone() } else { Ipv4Addr::new(1, 2, 3, 4) },
+                              state.recv_queue
                           ))
                     );
             }

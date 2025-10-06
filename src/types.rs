@@ -3,13 +3,12 @@ use clap::{Parser, arg, command};
 use indicatif::ProgressBar;
 use modular_bitfield::bitfield;
 use modular_bitfield::specifiers::*;
-use o2o::o2o;
 use parking_lot::RwLock;
 use parking_lot::lock_api::RwLockUpgradableReadGuard;
 use socket2::SockAddr;
 use std::collections::HashMap;
 use std::marker::{Send, Sync};
-use std::net::{IpAddr, Ipv4Addr, SocketAddrV4};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::os::fd::AsRawFd;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
@@ -100,50 +99,6 @@ pub struct Cli {
     pub secret: Option<String>,
 }
 
-#[derive(o2o)]
-#[from_owned(Cli)]
-pub struct SenderConfiguration {
-    pub server: bool,
-    pub queue: u16,
-    pub fwmark: u32,
-    pub queue_max_len: u32,
-    pub ports: Option<Vec<u16>>,
-    pub fragments: u8,
-    pub fragment_threshold: u8,
-    pub destination: Option<SocketAddrV4>,
-
-    pub snat: Option<SocketAddrV4>,
-    pub ttl: u128,
-    pub source_port: Option<u16>,
-    pub source_rotate_ms: Option<u128>,
-}
-
-#[derive(o2o)]
-#[from_owned(Cli)]
-pub struct ReceiverConfiguration {
-    pub server: bool,
-    pub ports: Option<Vec<u16>>,
-    pub recv_queue: u16,
-    pub recv_queue_max_len: u32,
-    pub timeout: u128,
-    pub snat: Option<SocketAddrV4>,
-}
-
-#[derive(o2o)]
-#[from_owned(Cli)]
-pub struct WhitelistConfiguration {
-    pub server: bool,
-    pub remote: Option<SocketAddrV4>,
-    pub secret: Option<String>,
-}
-
-#[derive(o2o)]
-#[from_owned(Cli)]
-pub struct StatusConfiguration {
-    pub server: bool,
-    pub interfaces: Vec<String>,
-}
-
 pub struct Interface {
     pub name: String,
     pub ip: Ipv4Addr,
@@ -224,8 +179,8 @@ impl Clone for Interface {
 pub struct Source {
     pub ip: Ipv4Addr,
     pub port: u16,
-    pub socket: RwLock<socket2::Socket>,
     pub addrs: RwLock<HashMap<SockAddr, SourceAddr>>,
+    pub socket: Option<RwLock<socket2::Socket>>,
 }
 
 pub struct SourceAddr {
@@ -237,18 +192,26 @@ impl Source {
     pub fn new(
         ip: Ipv4Addr,
         port: u16,
-        snat: SocketAddrV4,
+        snat: Option<SocketAddrV4>,
     ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
-        let socket = socket2::Socket::new(
-            socket2::Domain::IPV4,
-            socket2::Type::from(libc::SOCK_RAW),
-            Some(socket2::Protocol::from(libc::IPPROTO_UDP)),
-        )?;
-        socket.bind(&SockAddr::from(snat))?;
+        let socket = match snat {
+            Some(snat) => {
+                let socket = socket2::Socket::new(
+                    socket2::Domain::IPV4,
+                    socket2::Type::from(libc::SOCK_RAW),
+                    Some(socket2::Protocol::from(libc::IPPROTO_UDP)),
+                )?;
+
+                socket.bind(&SockAddr::from(snat))?;
+                Some(RwLock::new(socket))
+            }
+            _ => None,
+        };
+
         Ok(Self {
             ip,
             port,
-            socket: RwLock::new(socket),
+            socket,
             addrs: RwLock::new(HashMap::new()),
         })
     }

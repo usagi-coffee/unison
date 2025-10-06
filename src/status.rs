@@ -1,14 +1,22 @@
-use crate::types::{Interface, Source, Stats, StatusConfiguration};
+use crate::types::{Cli, Interface, Source, Stats};
 use indicatif::{MultiProgress, ProgressBar};
+use o2o::o2o;
 use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
+#[derive(o2o)]
+#[from_owned(Cli)]
+pub struct Status {
+    pub server: bool,
+    pub interfaces: Vec<String>,
+}
+
 pub fn listen(
     progress: Arc<MultiProgress>,
-    configuration: StatusConfiguration,
+    configuration: Status,
     interfaces: Arc<Vec<Interface>>,
     sources: Arc<RwLock<HashMap<u16, Source>>>,
     running: Arc<AtomicBool>,
@@ -121,13 +129,14 @@ pub fn listen(
         }
 
         rx.set_message(format!(
-            "[RX] ---------------- {:.2} ({:.2}) Mbps | 🧮 {:.3} MB | 📦 {:>6} | ❌ {:>4}/{:>4}",
+            "[RX] ---------------- {:.2} ({:.2}) Mbps | 🧮 {:.3} MB | 📦 {:>6} | ❌ {:>4}/{:>4}/{:>4}",
             recv_throughput,
             recv_peak_throughput,
             recv_total,
             format!("{}", stats.recv_current.load(Ordering::Relaxed)),
             format!("{}", stats.recv_dropped.load(Ordering::Relaxed)),
             format!("{}", stats.recv_invalid.load(Ordering::Relaxed)),
+            format!("{}", stats.recv_out_of_order.load(Ordering::Relaxed)),
         ));
 
         for source in sources.read().iter() {

@@ -5,10 +5,7 @@ use std::collections::HashMap;
 use std::process::Command;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use types::{
-    Cli, Interface, ReceiverConfiguration, SenderConfiguration, Stats, StatusConfiguration,
-    WhitelistConfiguration,
-};
+use types::{Cli, Interface, Stats};
 use utils::CommandGuard;
 
 mod receiver;
@@ -16,7 +13,6 @@ mod sender;
 mod status;
 mod types;
 mod utils;
-mod whitelist;
 
 fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     if sudo::check() != sudo::RunningAs::Root {
@@ -58,26 +54,20 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let receiver_stats = stats.clone();
         let receiver_interfaces = intefaces.clone();
         let receiver_sources = sources.clone();
-        let receiver_config = ReceiverConfiguration::from(cli.clone());
+        let receiver_config = receiver::Receiver::from(cli.clone());
         let receiver_tx = tx.clone();
 
         let sender_running = running.clone();
         let sender_stats = stats.clone();
         let sender_interfaces = intefaces.clone();
         let sender_sources = sources.clone();
-        let sender_config = SenderConfiguration::from(cli.clone());
+        let sender_config = sender::Sender::from(cli.clone());
         let sender_tx = tx.clone();
-
-        let whitelist_running = running.clone();
-        let whitelist_stats = stats.clone();
-        let whitelist_interfaces = intefaces.clone();
-        let whitelist_config = WhitelistConfiguration::from(cli.clone());
-        let whitelist_tx = tx.clone();
 
         let status_running = running.clone();
         let status_interfaces = intefaces.clone();
         let status_sources = sources.clone();
-        let status_config = StatusConfiguration::from(cli.clone());
+        let status_config = status::Status::from(cli.clone());
         let status_tx = tx.clone();
 
         scope.spawn(move || {
@@ -105,20 +95,6 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             running.store(false, Ordering::Relaxed);
             result
         });
-
-        if cli.remote.is_some() || (cli.server && cli.secret.is_some()) {
-            scope.spawn(move || {
-                let running = running.clone();
-                let result = whitelist_tx.send(whitelist::listen(
-                    whitelist_config,
-                    whitelist_interfaces,
-                    whitelist_running,
-                    whitelist_stats,
-                ));
-                running.store(false, Ordering::Relaxed);
-                result
-            });
-        }
 
         if !cli.silent {
             let progress = progress.clone();

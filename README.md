@@ -10,7 +10,6 @@ Flexible UDP transport layer designed for bi-directional multi-path delivery.
 - Packet deduplication, with out-of-order handling
 - Packet fragmentation across multiple interfaces for parallel transmission and reassembly
 - Seamless bidirectional handling of UDP traffic
-- HMAC-based authentication for automatic iptables whitelisting
 - Source IP masquerading and restoration for single-source IP–dependent protocols like SRT
 
 ## Planned Features
@@ -42,23 +41,12 @@ unison --server --ports 8888 --interfaces eth0
 
 ## Consistent Source IP/Port
 
-Some protocols like SRT, RTP, or other connection-oriented UDP protocols require all packets to originate from a single consistent source IP and port. When using multi-path transport, this consistency can be lost, leading to session instability or rejections.
+Some protocols like SRT, RTP, or other connection-oriented UDP protocols require all packets to originate from a single consistent source IP and port by reading the ip and udp header. When using multi-path transport, this consistency can be lost and can lead to session instability or rejections.
 
-Unison supports source address and port rewriting to preserve consistency. This is done at the ip/udp header level and ensures that the socket sees all packets as coming from the same source.
+Unison supports "snat-like" source address and port rewriting to preserve consistency. This is done at the ip/udp header level and ensures that the target socket sees all packets as coming from the same source.
 
 ```bash
 # Packets will appear as to come from 10.64.0.1:1337 to sockets on the server
 unison --server --snat 10.64.0.1:1337 --ports 8888 --interfaces eth0
 ```
 
-## HMAC Authentication and IP Whitelisting
-
-To prevent unauthorized traffic injection, Unison supports HMAC-based authentication using a shared secret. This ensures that only clients who know the secret can send packets, and their IPs are automatically whitelisted via iptables on the receiver.
-
-```bash
-# Client
-unison --remote 1.2.3.4 --secret mysecret --ports 8888 --interfaces stream0 stream1
-
-# Server
-unison --server --secret mysecret --ports 8888 --interfaces eth0
-```

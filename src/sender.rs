@@ -11,8 +11,26 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
-use crate::types::{Interface, Payload, SenderConfiguration, Source, Stats};
+use crate::types::{Cli, Interface, Payload, Source, Stats};
 use crate::utils::CommandGuard;
+
+#[derive(o2o::o2o)]
+#[from_owned(Cli)]
+pub struct Sender {
+    pub server: bool,
+    pub queue: u16,
+    pub fwmark: u32,
+    pub queue_max_len: u32,
+    pub ports: Option<Vec<u16>>,
+    pub fragments: u8,
+    pub fragment_threshold: u8,
+    pub destination: Option<SocketAddrV4>,
+
+    pub snat: Option<SocketAddrV4>,
+    pub ttl: u128,
+    pub source_port: Option<u16>,
+    pub source_rotate_ms: Option<u128>,
+}
 
 enum SourceStrategy {
     Original,
@@ -26,7 +44,7 @@ enum SourceStrategy {
 }
 
 pub fn listen(
-    configuration: SenderConfiguration,
+    configuration: Sender,
     interfaces: Arc<Vec<Interface>>,
     sources: Arc<RwLock<HashMap<u16, Source>>>,
     running: Arc<AtomicBool>,
@@ -96,7 +114,7 @@ pub fn listen(
             && ip_packet.get_next_level_protocol() == IpNextHeaderProtocols::Udp
             && let ip_header_len = 4 * ip_packet.get_header_length() as usize
             && let (ip_header, udp_packet) = payload.split_at_mut(ip_header_len)
-            && let (udp_header, mut udp_payload) = udp_packet.split_at_mut(UDP_HEADER)
+            && let (udp_header, udp_payload) = udp_packet.split_at_mut(UDP_HEADER)
             && let Some(mut ip_packet) = MutableIpv4Packet::new(ip_header)
             && let Some(mut udp_packet) = MutableUdpPacket::new(udp_header)
         {
@@ -247,7 +265,7 @@ pub fn listen(
     Ok(())
 }
 
-fn iptables(configuration: &SenderConfiguration) -> Vec<CommandGuard<'_>> {
+fn iptables(configuration: &Sender) -> Vec<CommandGuard<'_>> {
     let mut rules = vec![];
 
     if !configuration.server {
