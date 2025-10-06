@@ -98,15 +98,6 @@ pub struct Cli {
     // Secret used for HMAC whitelisting
     #[arg(long)]
     pub secret: Option<String>,
-
-    /// Obfuscate packet payloads to make DPI detection harder.
-    ///
-    /// When enabled, outgoing payload bytes are XOR'd with a sequence number
-    /// and the receiver will reverse the operation. This is a lightweight
-    /// obfuscation intended to reduce the effectiveness of simple DPI
-    /// signatures (not a replacement for cryptographic transport).
-    #[arg(long, action, default_value = "false")]
-    pub obfuscate_payload: bool,
 }
 
 #[derive(o2o)]
@@ -136,7 +127,6 @@ pub struct ReceiverConfiguration {
     pub recv_queue_max_len: u32,
     pub timeout: u128,
     pub snat: Option<SocketAddrV4>,
-    pub obfuscate_payload: bool,
 }
 
 #[derive(o2o)]

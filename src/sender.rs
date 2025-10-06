@@ -12,7 +12,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use crate::types::{Interface, Payload, SenderConfiguration, Source, Stats};
-use crate::utils::{CommandGuard, xor_in_place};
+use crate::utils::CommandGuard;
 
 enum SourceStrategy {
     Original,

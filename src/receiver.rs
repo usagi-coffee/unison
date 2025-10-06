@@ -1,5 +1,5 @@
 use crate::types::{Interface, Payload, ReceiverConfiguration, Source, Stats};
-use crate::utils::{CommandGuard, xor_in_place};
+use crate::utils::CommandGuard;
 use nfq::{Queue, Verdict};
 use parking_lot::{RwLock, RwLockUpgradableReadGuard};
 use pnet::packet::ip::IpNextHeaderProtocols;
@@ -96,11 +96,6 @@ pub fn listen(
                     }
                 }
 
-                let mut udp_payload = udp_payload.to_vec();
-                if configuration.obfuscate_payload {
-                    xor_in_place(&mut udp_payload, extra.sequence() as usize);
-                }
-
                 match packets.entry(extra.sequence()) {
                     btree_map::Entry::Vacant(entry) => {
                         let mut header_or_payload: Vec<u8>;
@@ -117,7 +112,7 @@ pub fn listen(
                             header_or_payload.extend_from_slice(ip_header);
                             header_or_payload.extend_from_slice(udp_header);
                             fragments[extra.fragment() as usize] =
-                                Some(udp_payload.into_boxed_slice());
+                                Some(udp_payload.to_vec().into_boxed_slice());
                         } else {
                             let udp_length = UDP_HEADER + udp_payload.len();
                             header_or_payload = Vec::with_capacity(ip_header_len + udp_length);
@@ -147,7 +142,7 @@ pub fn listen(
                         let packet = entry.get_mut();
                         if packet.fragments[extra.fragment() as usize].is_none() {
                             packet.fragments[extra.fragment() as usize] =
-                                Some(udp_payload.into_boxed_slice());
+                                Some(udp_payload.to_vec().into_boxed_slice());
                             packet.completed = packet.fragments.iter().all(|f| f.is_some());
                             if packet.completed {
                                 completed = u32::max(completed, extra.sequence());
