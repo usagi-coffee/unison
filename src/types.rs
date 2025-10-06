@@ -8,7 +8,7 @@ use parking_lot::lock_api::RwLockUpgradableReadGuard;
 use socket2::SockAddr;
 use std::collections::HashMap;
 use std::marker::{Send, Sync};
-use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4};
+use std::net::{IpAddr, Ipv4Addr, SocketAddrV4};
 use std::os::fd::AsRawFd;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
@@ -117,6 +117,7 @@ impl Interface {
             socket2::Type::from(libc::SOCK_RAW),
             Some(socket2::Protocol::from(libc::IPPROTO_RAW)),
         )?;
+
         socket.bind_device(Some(name.as_bytes()))?;
         socket.set_header_included_v4(true)?;
         Ok(Self {
@@ -130,6 +131,7 @@ impl Interface {
         })
     }
 
+    #[allow(dead_code)]
     pub fn udp(name: String) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let socket = socket2::Socket::new(
             socket2::Domain::IPV4,
